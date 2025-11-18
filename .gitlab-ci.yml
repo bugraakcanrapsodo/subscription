@@ -1,0 +1,170 @@
+stages:
+  - setup
+  - test
+
+variables:
+  # Test execution control
+  TEST_ENV: "test"  # Options: test, staging, prod
+  RUN_TESTS: "all"  # Options: all, api, ui, purchase, upgrade, etc.
+
+  # Xray integration
+  XRAY_ENABLE: "false"  # Set to "true" to enable Xray integration
+  XRAY_UPDATE_STRATEGY: "PASS_WINS"  # Options: PASS_WINS, FAIL_WINS, LAST_WINS
+
+
+
+# Cache for faster builds
+cache:
+  key:
+    files:
+      - requirements.txt
+    prefix: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - venv/
+    - .pip-cache/
+  policy: pull-push
+
+# Setup job
+setup_environment:
+  stage: setup
+  tags:
+    - qa-linux  # Adjust to your runner tags
+  script:
+    - echo "=== Stripe Subscription Test Setup ==="
+    - echo "TEST_ENV: $TEST_ENV"
+    - echo "RUN_TESTS: $RUN_TESTS"
+    - echo "XRAY_ENABLE: $XRAY_ENABLE"
+    - echo "======================================"
+
+    # Create pip cache directory
+    - mkdir -p .pip-cache
+
+    # Create pip cache directory
+    - mkdir -p .pip-cache
+
+    # Only create venv if it doesn't exist
+    - |
+      if [ ! -d "venv" ]; then
+        echo "Creating new virtual environment..."
+        python3 -m venv venv
+      else
+        echo "Using cached virtual environment..."
+      fi
+
+    # Install the required dependencies from requirements.txt if they are not in cache
+    - export PYENV_ROOT="$HOME/.pyenv"
+    - export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
+    - eval "$(pyenv init --path)"
+    - eval "$(pyenv init -)"
+    - pyenv shell 3.11.9
+    - python --version  # Just to verify it's using 3.11.9
+    - source venv/bin/activate
+    - pip install --cache-dir=.pip-cache --upgrade pip
+
+    # Install/upgrade packages and show what changed
+    - |
+      echo "Checking for package changes..."
+      pip install --cache-dir=.pip-cache -r requirements.txt
+      echo "Current installed packages:"
+      pip list
+
+    # Install pytest-reportportal only in the pipeline
+    - pip install --cache-dir=.pip-cache pytest-reportportal
+
+    # Start Docker Playwright service (ADAPTED - uses cloudApi pattern)
+    - echo "Starting Docker Playwright service..."
+    - |
+      if docker info >/dev/null 2>&1; then
+        cd docker/playwright-service/config
+        docker-compose down || echo "No existing containers"
+
+        # Clean previous artifacts (REUSED FROM cloudApi)
+        cd ..
+        bash scripts/cleanup.sh || echo "Cleanup script not executable"
+
+        # Start service
+        cd config
+        docker-compose up --build -d
+        cd ../../..
+
+        # Wait for service to be ready
+        echo "Waiting for Playwright service..."
+        sleep 10
+        curl -f http://localhost:3000/api/health || echo "Service may need more time to start"
+      else
+        echo "Docker not available - UI tests will be skipped"
+      fi
+
+    # Start playwright service if Docker daemon is up
+    - |
+      echo "Checking if Docker daemon is running..."
+      if docker info >/dev/null 2>&1; then
+        echo "Docker daemon is running. Starting playwright service..."
+        docker-compose -f docker/playwright-service/config/docker-compose.yml down || echo "Failed to stop existing containers, but continuing..."
+        bash docker/playwright-service/scripts/cleanup.sh || echo "Cleanup script failed, but continuing..."
+
+        docker-compose -f docker/playwright-service/config/docker-compose.yml up --build -d || echo "Failed to start docker-compose, but continuing pipeline..."
+      else
+        echo "Docker daemon is not running. Skipping playwright service startup."
+        echo "Warning: Tests may fail if they depend on playwright service."
+      fi
+
+    # Verify environment
+    - python --version
+    - pip list
+    - echo "Setup complete"
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH
+  artifacts:
+    paths:
+      - venv/
+    expire_in: 1 hour
+
+# Test job
+run_tests:
+  stage: test
+  tags:
+    - qa-linux
+  dependencies:
+    - setup_environment
+  script:
+    - source venv/bin/activate
+
+    # Set environment variables
+    - export BACKEND_API_URL="${BACKEND_API_URL:-https://test.mlm.rapsodo.com}"
+    - export BACKEND_API_KEY="${BACKEND_API_KEY}"
+    - export BACKEND_API_SECRET="${BACKEND_API_SECRET}"
+    - export PLAYWRIGHT_SERVICE_URL="http://localhost:3000"
+
+
+
+    # ReportPortal configuration
+    - cat pytest.ini
+
+    # Run tests
+    - |
+      echo "=== Running Stripe Tests ==="
+      echo "Environment: $TEST_ENV"
+      echo "Test Suite: $RUN_TESTS"
+      echo "Xray Enabled: $XRAY_ENABLE"
+      echo "ReportPortal Project: $RP_PROJECT"
+
+      PYTEST_ARGS="-v -s tests/ --reportportal"
+
+      # Add Xray if enabled
+      if [ "$XRAY_ENABLE" == "true" ]; then
+        PYTEST_ARGS="$PYTEST_ARGS --xray-enable"
+      fi
+
+      # Select test markers based on RUN_TESTS
+      if [ "$RUN_TESTS" != "all" ]; then
+        PYTEST_ARGS="$PYTEST_ARGS -m $RUN_TESTS"
+      fi
+
+      # Run tests
+      pytest $PYTEST_ARGS
+
+  allow_failure: true
+
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH

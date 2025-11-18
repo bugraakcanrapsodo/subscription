@@ -1,0 +1,20 @@
+# Ignore all .pyc files
+*.pyc
+venv
+.DS_Store
+.vscode
+pro20Data/keys.yaml
+pro20Data/keysProd.yaml
+/logs
+
+# Docker
+docker/playwright-service/output/screenshots/*.png
+docker/playwright-service/output/videos/*.webm
+docker/playwright-service/output/videos/*.mp4
+docker/playwright-service/output/logs/*.log
+docker/playwright-service/output/attachments/*
+
+
+# Node modules (Playwright service)
+docker/playwright-service/node_modules/
+docker/playwright-service/package-lock.json

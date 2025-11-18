@@ -1,0 +1,17 @@
+services:
+  stripe-playwright-service:
+    build:
+      context: ..
+      dockerfile: ./config/Dockerfile
+    container_name: stripe-playwright-service
+    ports:
+      - "3001:3000"
+    environment:
+      - PORT=3000
+      - DEBUG_MODE=false
+    volumes:
+      - ../output/screenshots:/app/output/screenshots
+      - ../output/videos:/app/output/videos
+      - ../output/logs:/app/output/logs
+      - ../output/attachments:/app/output/attachments
+    restart: unless-stopped
