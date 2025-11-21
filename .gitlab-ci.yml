@@ -39,9 +39,6 @@ setup_environment:
     # Create pip cache directory
     - mkdir -p .pip-cache
 
-    # Create pip cache directory
-    - mkdir -p .pip-cache
-
     # Only create venv if it doesn't exist
     - |
       if [ ! -d "venv" ]; then
@@ -71,42 +68,21 @@ setup_environment:
     # Install pytest-reportportal only in the pipeline
     - pip install --cache-dir=.pip-cache pytest-reportportal
 
-    # Start Docker Playwright service (ADAPTED - uses cloudApi pattern)
+    # Start Docker Playwright service
     - echo "Starting Docker Playwright service..."
     - |
       if docker info >/dev/null 2>&1; then
-        cd docker/playwright-service/config
-        docker-compose down || echo "No existing containers"
-
-        # Clean previous artifacts (REUSED FROM cloudApi)
-        cd ..
-        bash scripts/cleanup.sh || echo "Cleanup script not executable"
-
-        # Start service
-        cd config
-        docker-compose up --build -d
-        cd ../../..
-
+        echo "Docker daemon is running. Starting playwright service..."
+        docker-compose -f docker/playwright-service/config/docker-compose.yml down || echo "No existing containers"
+        bash docker/playwright-service/scripts/cleanup.sh || echo "Cleanup script not executable"
+        docker-compose -f docker/playwright-service/config/docker-compose.yml up --build -d
+        
         # Wait for service to be ready
         echo "Waiting for Playwright service..."
         sleep 10
-        curl -f http://localhost:3000/api/health || echo "Service may need more time to start"
+        curl -f http://localhost:3001/api/health || echo "Service may need more time to start"
       else
         echo "Docker not available - UI tests will be skipped"
-      fi
-
-    # Start playwright service if Docker daemon is up
-    - |
-      echo "Checking if Docker daemon is running..."
-      if docker info >/dev/null 2>&1; then
-        echo "Docker daemon is running. Starting playwright service..."
-        docker-compose -f docker/playwright-service/config/docker-compose.yml down || echo "Failed to stop existing containers, but continuing..."
-        bash docker/playwright-service/scripts/cleanup.sh || echo "Cleanup script failed, but continuing..."
-
-        docker-compose -f docker/playwright-service/config/docker-compose.yml up --build -d || echo "Failed to start docker-compose, but continuing pipeline..."
-      else
-        echo "Docker daemon is not running. Skipping playwright service startup."
-        echo "Warning: Tests may fail if they depend on playwright service."
       fi
 
     # Verify environment
