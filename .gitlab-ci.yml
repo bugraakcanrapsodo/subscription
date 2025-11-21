@@ -48,13 +48,13 @@ setup_environment:
         echo "Using cached virtual environment..."
       fi
 
-    # Install the required dependencies from requirements.txt if they are not in cache
+    # Install the required dependencies from requirements.txt
     - export PYENV_ROOT="$HOME/.pyenv"
     - export PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
     - eval "$(pyenv init --path)"
     - eval "$(pyenv init -)"
     - pyenv shell 3.11.9
-    - python --version  # Just to verify it's using 3.11.9
+    - python --version
     - source venv/bin/activate
     - pip install --cache-dir=.pip-cache --upgrade pip
 
@@ -69,15 +69,12 @@ setup_environment:
     - pip install --cache-dir=.pip-cache pytest-reportportal
 
     # Start Docker Playwright service
-    - echo "Starting Docker Playwright service..."
     - |
       if docker info >/dev/null 2>&1; then
         echo "Docker daemon is running. Starting playwright service..."
         docker-compose -f docker/playwright-service/config/docker-compose.yml down || echo "No existing containers"
         bash docker/playwright-service/scripts/cleanup.sh || echo "Cleanup script not executable"
         docker-compose -f docker/playwright-service/config/docker-compose.yml up --build -d
-        
-        # Wait for service to be ready
         echo "Waiting for Playwright service..."
         sleep 10
         curl -f http://localhost:3001/api/health || echo "Service may need more time to start"
@@ -112,8 +109,6 @@ run_tests:
     - export BACKEND_API_SECRET="${BACKEND_API_SECRET}"
     - export PLAYWRIGHT_SERVICE_URL="http://localhost:3000"
 
-
-
     # ReportPortal configuration
     - cat pytest.ini
 
@@ -127,17 +122,14 @@ run_tests:
 
       PYTEST_ARGS="-v -s tests/ --reportportal"
 
-      # Add Xray if enabled
       if [ "$XRAY_ENABLE" == "true" ]; then
         PYTEST_ARGS="$PYTEST_ARGS --xray-enable"
       fi
 
-      # Select test markers based on RUN_TESTS
       if [ "$RUN_TESTS" != "all" ]; then
         PYTEST_ARGS="$PYTEST_ARGS -m $RUN_TESTS"
       fi
 
-      # Run tests
       pytest $PYTEST_ARGS
 
   allow_failure: true
