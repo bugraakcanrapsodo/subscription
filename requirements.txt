@@ -20,6 +20,12 @@ pytz==2025.2
 PyYAML==6.0.3
 python-dotenv==1.2.1
 
+# Data models and validation
+pydantic==2.12.4
+
+# Stripe SDK for test clock management
+stripe==11.3.0
+
 # Basic dependencies
 certifi==2025.11.12
 charset-normalizer==3.4.4
@@ -40,9 +46,11 @@ propcache==0.4.1
 Pygments==2.19.2
 typing-extensions==4.15.0
 yarl==1.22.0
+annotated-types==0.7.0
+pydantic-core==2.41.5
+typing-inspection==0.4.2
 
 # TODO: Add these when implementing new components:
-# pydantic                   # For data models
 # pandas                     # For CSV/Excel data loading
 # openpyxl                   # For Excel support
 # stripe                     # Stripe SDK (if needed)

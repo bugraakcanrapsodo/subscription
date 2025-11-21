@@ -64,6 +64,22 @@ class BasePage {
   }
 
   /**
+   * Get text content from an element, or null if element not found
+   * Useful for optional elements that may not exist on all page types
+   * @param {string} locator - Element locator
+   * @param {number} timeout - Timeout in milliseconds (default: 2000)
+   * @returns {Promise<string|null>}
+   */
+  async getTextOrNull(locator, timeout = 2000) {
+    try {
+      await this.page.waitForSelector(locator, { timeout });
+      return await this.getText(locator);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Wait for a specific amount of time
    * @param {number} milliseconds - Time to wait in milliseconds
    * @returns {Promise<void>}
@@ -86,12 +102,22 @@ class BasePage {
   }
 
   /**
-   * Click on an element
+   * Click on an element with fallback to JavaScript click
+   * Tries standard Playwright click first, falls back to JS click if visibility checks fail
    * @param {string} locator - Element locator
    * @returns {Promise<void>}
    */
   async click(locator) {
-    await this.page.locator(locator).click();
+    try {
+      // Try standard Playwright click (with actionability checks)
+      await this.page.locator(locator).click({ timeout: 2000 });
+      Logger.debug(`Clicked element: ${locator}`);
+    } catch (error) {
+      // If standard click fails (visibility/actionability issues), use JavaScript click
+      Logger.warn(`Standard click failed for ${locator}, using JavaScript click fallback`);
+      await this.page.locator(locator).evaluate(el => el.click());
+      Logger.debug(`JavaScript click successful: ${locator}`);
+    }
   }
 
   /**
@@ -178,7 +204,20 @@ class BasePage {
     }
   }
 
-
+  /**
+   * Get selector with dynamic value(s) filled in
+   * @param {string} selectorTemplate - Selector template with {} placeholders
+   * @param {...string} values - Values to fill in the template
+   * @returns {string} Formatted selector
+   */
+  getOptionSelector(selectorTemplate, ...values) {
+    let selector = selectorTemplate;
+    values.forEach(value => {
+      selector = selector.replace('{}', value);
+    });
+    Logger.debug(`Formatted selector: ${selector}`);
+    return selector;
+  }
 
 }
 
