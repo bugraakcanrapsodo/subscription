@@ -114,7 +114,7 @@ setup_environment:
     - pip list
     - echo "Setup complete"
   rules:
-    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH
+    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH'
   artifacts:
     paths:
       - venv/
@@ -167,4 +167,4 @@ run_tests:
   allow_failure: true
 
   rules:
-    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH
+    - if: '$CI_COMMIT_REF_NAME == $TARGET_BRANCH'
