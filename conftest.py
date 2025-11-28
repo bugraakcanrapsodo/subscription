@@ -30,9 +30,20 @@ from fixtures import *
 
 
 # ==================== Pytest Configuration ====================
+# 
+# ARCHITECTURE NOTE:
+# - All pytest options are defined HERE in conftest.py (single source of truth)
+# - All fixtures are in fixtures.py (imported via "from fixtures import *")
+# - Test files only contain test functions, no fixtures or options
+# - Regular Python classes (TestExecutor, ActionExecutor, etc.) receive dependencies
+#   via constructor parameters because they cannot access pytest fixtures directly
 
 def pytest_addoption(parser):
-    """Add custom command line options"""
+    """
+    Add custom command line options
+    
+    Note: All pytest options should be defined here, not in individual test files
+    """
 
     parser.addoption(
         "--xray-enable", action="store_true", default=False,
@@ -52,6 +63,24 @@ def pytest_addoption(parser):
         "--console-log-level", action="store", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Console log level"
+    )
+    
+    # Data-driven test options
+    parser.addoption(
+        "--excel", action="store",
+        help="Path to Excel/CSV test file"
+    )
+    parser.addoption(
+        "--test-id", action="store",
+        help="Specific test ID to run"
+    )
+    parser.addoption(
+        "--playwright-url", action="store", default="http://localhost:3001",
+        help="Playwright service URL (default: http://localhost:3001)"
+    )
+    parser.addoption(
+        "--cleanup-users", action="store_true", default=False,
+        help="Delete test users after execution"
     )
 
 
@@ -78,7 +107,7 @@ def test_params(pytestconfig):
         "xray_enable": pytestconfig.getoption("--xray-enable"),
         "stripe_secret_key": os.getenv("STRIPE_SECRET_KEY"),
         "backend_api_url": os.getenv("BACKEND_API_URL"),
-        "playwright_service_url": os.getenv("PLAYWRIGHT_SERVICE_URL", "http://localhost:3000")
+        "playwright_service_url": os.getenv("PLAYWRIGHT_SERVICE_URL", "http://localhost:3001")
     }
 
 

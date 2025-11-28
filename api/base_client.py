@@ -78,11 +78,18 @@ class BaseAPIClient:
         if 'json' in kwargs:
             self.logger.debug(f"Request Body: {kwargs['json']}")
     
-    def _log_response(self, response: APIResponse):
-        """Log API response details"""
+    def _log_response(self, response: APIResponse, log_response_body: bool = True):
+        """
+        Log API response details
+        
+        Args:
+            response: APIResponse object
+            log_response_body: If False, skips logging the response body (useful for large responses)
+        """
         self.logger.info(f"API Response: {response.status_code} - Success: {response.success}")
-        # Log response body for debugging
-        if response.json_data:
+        
+        # Log response body for debugging (unless explicitly disabled)
+        if log_response_body and response.json_data:
             self.logger.debug(f"Response Body: {response.json_data}")
         
         if not response.is_success():
@@ -156,13 +163,14 @@ class BaseAPIClient:
         """
         self.session.headers.update({key: value})
     
-    def get(self, endpoint: str, params: Optional[Dict] = None, **kwargs) -> APIResponse:
+    def get(self, endpoint: str, params: Optional[Dict] = None, log_response_body: bool = True, **kwargs) -> APIResponse:
         """
         Send GET request
         
         Args:
             endpoint: API endpoint
             params: Query parameters
+            log_response_body: If False, skips logging the response body (useful for large responses)
             **kwargs: Additional arguments for requests.get()
             
         Returns:
@@ -179,19 +187,20 @@ class BaseAPIClient:
                 **kwargs
             )
             api_response = APIResponse(response)
-            self._log_response(api_response)
+            self._log_response(api_response, log_response_body=log_response_body)
             return api_response
         except requests.exceptions.RequestException as e:
             self.logger.error(f"GET request failed: {str(e)}")
             raise
     
-    def post(self, endpoint: str, json_data: Optional[Dict] = None, **kwargs) -> APIResponse:
+    def post(self, endpoint: str, json_data: Optional[Dict] = None, log_response_body: bool = True, **kwargs) -> APIResponse:
         """
         Send POST request
         
         Args:
             endpoint: API endpoint
             json_data: JSON request body
+            log_response_body: If False, skips logging the response body (useful for large responses)
             **kwargs: Additional arguments for requests.post()
             
         Returns:
@@ -208,19 +217,20 @@ class BaseAPIClient:
                 **kwargs
             )
             api_response = APIResponse(response)
-            self._log_response(api_response)
+            self._log_response(api_response, log_response_body=log_response_body)
             return api_response
         except requests.exceptions.RequestException as e:
             self.logger.error(f"POST request failed: {str(e)}")
             raise
     
-    def put(self, endpoint: str, json_data: Optional[Dict] = None, **kwargs) -> APIResponse:
+    def put(self, endpoint: str, json_data: Optional[Dict] = None, log_response_body: bool = True, **kwargs) -> APIResponse:
         """
         Send PUT request
         
         Args:
             endpoint: API endpoint
             json_data: JSON request body
+            log_response_body: If False, skips logging the response body (useful for large responses)
             **kwargs: Additional arguments for requests.put()
             
         Returns:
@@ -237,18 +247,19 @@ class BaseAPIClient:
                 **kwargs
             )
             api_response = APIResponse(response)
-            self._log_response(api_response)
+            self._log_response(api_response, log_response_body=log_response_body)
             return api_response
         except requests.exceptions.RequestException as e:
             self.logger.error(f"PUT request failed: {str(e)}")
             raise
     
-    def delete(self, endpoint: str, **kwargs) -> APIResponse:
+    def delete(self, endpoint: str, log_response_body: bool = True, **kwargs) -> APIResponse:
         """
         Send DELETE request
         
         Args:
             endpoint: API endpoint
+            log_response_body: If False, skips logging the response body (useful for large responses)
             **kwargs: Additional arguments for requests.delete()
             
         Returns:
@@ -264,19 +275,20 @@ class BaseAPIClient:
                 **kwargs
             )
             api_response = APIResponse(response)
-            self._log_response(api_response)
+            self._log_response(api_response, log_response_body=log_response_body)
             return api_response
         except requests.exceptions.RequestException as e:
             self.logger.error(f"DELETE request failed: {str(e)}")
             raise
     
-    def patch(self, endpoint: str, json_data: Optional[Dict] = None, **kwargs) -> APIResponse:
+    def patch(self, endpoint: str, json_data: Optional[Dict] = None, log_response_body: bool = True, **kwargs) -> APIResponse:
         """
         Send PATCH request
         
         Args:
             endpoint: API endpoint
             json_data: JSON request body
+            log_response_body: If False, skips logging the response body (useful for large responses)
             **kwargs: Additional arguments for requests.patch()
             
         Returns:
@@ -293,7 +305,7 @@ class BaseAPIClient:
                 **kwargs
             )
             api_response = APIResponse(response)
-            self._log_response(api_response)
+            self._log_response(api_response, log_response_body=log_response_body)
             return api_response
         except requests.exceptions.RequestException as e:
             self.logger.error(f"PATCH request failed: {str(e)}")

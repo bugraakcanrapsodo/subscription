@@ -28,8 +28,9 @@ class CheckoutPage extends BasePage {
       currencyToggle: '[data-testid="equal-presentment-currency-toggle-toggles"]',
       currencyButtonTemplate: 'button img[alt="{}"]',
       
-      // Payment method options
+      // Payment method options (multiple possible selectors due to Stripe UI variations)
       cardOption: '[data-testid="card-accordion-item-button"]',
+      cardOptionRadioButton: '#payment-method-accordion-item-title-card',  // Alternative selector (radio input)
       cashAppPayOption: '[data-testid="cashapp-accordion-item-button"]',
       bankOption: '[data-testid="link_instant_debit-accordion-item-button"]',
       
@@ -38,6 +39,18 @@ class CheckoutPage extends BasePage {
       cardExpiry: '#cardExpiry',
       cardCvc: '#cardCvc',
       cardholderName: '#billingName',
+      
+      // Billing address fields (appear dynamically per country)
+      billingAddressLine1: '#billingAddressLine1',
+      billingAddressLine2: '#billingAddressLine2',
+      billingCity: '#billingLocality',
+      billingZip: '#billingPostalCode',
+      billingState: '#billingAdministrativeArea',
+      
+      // Stripe Pass checkbox (makes phone mandatory if checked)
+      stripePassCheckbox: '#enableStripePass',
+      billingPhone: '#billingPhone',
+      
       payButton: '[data-testid="hosted-payment-submit-button"]'
     };
   }
@@ -202,9 +215,26 @@ class CheckoutPage extends BasePage {
    * @returns {Promise<void>}
    */
   async selectCardPayment() {
-    // Use BasePage click method (which has fallback to JavaScript click)
-    await this.click(this.selectors.cardOption);
-    Logger.info('Card accordion button clicked');
+    try {
+      Logger.info('Looking for card accordion button...');
+      
+      // Check if radio button is visible (newer Stripe UI)
+      const isRadioButtonVisible = await this.isVisible(this.selectors.cardOptionRadioButton, 2000);
+      
+      if (isRadioButtonVisible) {
+        Logger.info('Radio button visible - clicking cardOption selector (not visible but clickable)');
+        // Radio button is visible but not clickable
+        // Click cardOption instead (not visible but clickable via JS)
+        await this.click(this.selectors.cardOption);
+        Logger.info('Card accordion button clicked via cardOption selector');
+      } else {
+        // Radio button not visible - card form is already open
+        Logger.info('Radio button not visible - card form is already open');
+      }
+      
+    } catch (error) {
+      Logger.info('Error checking card accordion button - card form might already be open');
+    }
     
     // Wait for card form to appear
     await this.page.waitForSelector(this.selectors.cardNumber, { timeout: 10000, state: 'visible' });
@@ -218,6 +248,7 @@ class CheckoutPage extends BasePage {
    * @param {string} cardDetails.cardExpiry - Expiry date (MM/YY format)
    * @param {string} cardDetails.cardCvc - CVC code
    * @param {string} cardDetails.cardholderName - Name on card
+   * @param {string} cardDetails.country - Country code (us, ca, gb, etc.)
    * @returns {Promise<void>}
    */
   async fillCardDetails(cardDetails) {
@@ -241,9 +272,94 @@ class CheckoutPage extends BasePage {
     // Fill cardholder name
     await this.enter(this.selectors.cardholderName, cardDetails.cardholderName);
     Logger.info('Cardholder name entered');
-    await this.page.waitForTimeout(500);
+    await this.page.waitForTimeout(1000); // Wait for address fields to appear dynamically
+    
+    // Fill billing address based on country requirements
+    const country = (cardDetails.country || 'us').toLowerCase();
+    await this.fillBillingAddress(country);
+    
+    // UNCHECK "Save my information for faster checkout" if it's checked - it makes phone mandatory
+    try {
+      const stripePassCheckbox = this.page.locator(this.selectors.stripePassCheckbox);
+      const isChecked = await stripePassCheckbox.isChecked({ timeout: 2000 });
+      
+      if (isChecked) {
+        Logger.info('Stripe Pass checkbox is checked by default, unchecking it...');
+        await stripePassCheckbox.uncheck();
+        Logger.info('✓ Stripe Pass checkbox unchecked to avoid phone requirement');
+        await this.page.waitForTimeout(500);
+      } else {
+        Logger.info('Stripe Pass checkbox is not checked, no action needed');
+      }
+    } catch (error) {
+      Logger.info('Stripe Pass checkbox not found or not visible, continuing...');
+    }
     
     Logger.info('All card details filled successfully');
+  }
+  
+  /**
+   * Fill billing address based on country requirements
+   * @param {string} country - Country code (us, ca, gb, etc.)
+   * @returns {Promise<void>}
+   */
+  async fillBillingAddress(country) {
+    Logger.info(`Filling billing address for country: ${country.toUpperCase()}`);
+    
+    try {
+      if (country === 'us') {
+        // USA requires: address line 1, city, zip, state
+        Logger.info('Filling US address fields');
+        
+        await this.enter(this.selectors.billingAddressLine1, '123 Test Street');
+        Logger.info('Address line 1: 123 Test Street');
+        
+        // Wait 2 seconds for Google autocomplete dropdown to appear
+        Logger.info('Waiting 2 seconds for Google autocomplete dropdown...');
+        await this.page.waitForTimeout(2000);
+        
+        // Dismiss Google autocomplete dropdown by pressing Escape
+        await this.page.keyboard.press('Escape');
+        Logger.info('Dismissed Google autocomplete dropdown');
+        await this.page.waitForTimeout(500);
+        
+        await this.enter(this.selectors.billingCity, 'New York');
+        Logger.info('City: New York');
+        await this.page.waitForTimeout(500);
+        
+        await this.enter(this.selectors.billingZip, '10001');
+        Logger.info('ZIP: 10001');
+        await this.page.waitForTimeout(500);
+        
+        // Select state from dropdown
+        await this.page.locator(this.selectors.billingState).selectOption('NY');
+        Logger.info('State: NY');
+        
+      } else if (country === 'ca') {
+        // Canada requires only: postal code
+        Logger.info('Filling Canadian postal code');
+        
+        await this.enter(this.selectors.billingZip, 'M5H 2N2');
+        Logger.info('Postal code: M5H 2N2');
+        
+      } else if (country === 'gb') {
+        // UK requires only: postal code
+        Logger.info('Filling UK postal code');
+        
+        await this.enter(this.selectors.billingZip, 'SW1A 1AA');
+        Logger.info('Postal code: SW1A 1AA');
+        
+      } else {
+        // Other countries (de, fr, au, sg, jp) don't require address
+        Logger.info(`Country ${country.toUpperCase()} does not require billing address, skipping`);
+      }
+      
+      await this.page.waitForTimeout(500);
+      
+    } catch (error) {
+      Logger.warn(`Error filling billing address for ${country}: ${error.message}`);
+      Logger.info('Continuing with payment...');
+    }
   }
 
   /**
@@ -272,7 +388,7 @@ class CheckoutPage extends BasePage {
     // Fill card details
     await this.fillCardDetails(cardDetails);
     
-    await this.page.waitForTimeout(500);
+    await this.page.waitForTimeout(1000);
 
     // Click pay button
     await this.clickPayButton();

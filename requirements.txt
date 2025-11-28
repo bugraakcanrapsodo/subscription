@@ -26,6 +26,9 @@ pydantic==2.12.4
 # Stripe SDK for test clock management
 stripe==11.3.0
 
+# Browser automation (for Dashboard automation)
+playwright==1.49.1
+
 # Basic dependencies
 certifi==2025.11.12
 charset-normalizer==3.4.4
@@ -50,7 +53,6 @@ annotated-types==0.7.0
 pydantic-core==2.41.5
 typing-inspection==0.4.2
 
-# TODO: Add these when implementing new components:
-# pandas                     # For CSV/Excel data loading
-# openpyxl                   # For Excel support
-# stripe                     # Stripe SDK (if needed)
+# Data processing for Excel/CSV test cases
+pandas==2.2.3
+openpyxl==3.1.5

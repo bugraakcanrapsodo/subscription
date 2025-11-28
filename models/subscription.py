@@ -3,7 +3,7 @@ Subscription Models
 Pydantic models for subscription-related API responses
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 
@@ -114,7 +114,7 @@ class WebPlansResponse(BaseModel):
 class SubscriptionPackage(BaseModel):
     """Subscription package details"""
     code: int
-    trial_period_days: str
+    trial_period_days: Optional[str] = None  # Present for trial subscriptions only
 
 
 class SubscriptionData(BaseModel):
@@ -210,4 +210,67 @@ class GetAGLicenseResponse(BaseModel):
             'expire_date': self.license.expireDate,
             'create_date': self.license.createDate
         }
+
+
+# ==================== Admin API Models ====================
+
+class AdminSubscription(BaseModel):
+    """Admin subscription details"""
+    id: int
+    userId: int
+    email: str
+    type: int
+    mlmVersion: int
+    status: int
+    startDate: Optional[str] = None  # Some subscriptions may have None values
+    expireDate: Optional[str] = None  # Some subscriptions may have None values
+    count: str  # Total count of subscriptions (same for all entries)
+
+
+class GetAdminSubscriptionsResponse(BaseModel):
+    """Get admin subscriptions API response"""
+    success: bool
+    subscriptions: List[AdminSubscription]
+    
+    def get_subscription_by_email(self, email: str) -> Optional[AdminSubscription]:
+        """
+        Find subscription by user email
+        
+        Args:
+            email: User email address
+            
+        Returns:
+            AdminSubscription or None if not found
+        """
+        for sub in self.subscriptions:
+            if sub.email.lower() == email.lower():
+                return sub
+        return None
+    
+    def get_subscriptions_by_user_id(self, user_id: int) -> List[AdminSubscription]:
+        """
+        Get all subscriptions for a user
+        
+        Args:
+            user_id: User ID
+            
+        Returns:
+            List of subscriptions for the user
+        """
+        return [sub for sub in self.subscriptions if sub.userId == user_id]
+    
+    def get_subscription_by_id(self, subscription_id: int) -> Optional[AdminSubscription]:
+        """
+        Find subscription by subscription ID
+        
+        Args:
+            subscription_id: Subscription ID
+            
+        Returns:
+            AdminSubscription or None if not found
+        """
+        for sub in self.subscriptions:
+            if sub.id == subscription_id:
+                return sub
+        return None
 

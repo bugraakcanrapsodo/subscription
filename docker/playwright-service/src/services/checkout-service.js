@@ -143,7 +143,8 @@ class CheckoutService {
           cardNumber: data.cardNumber,
           cardExpiry: data.cardExpiry,
           cardCvc: data.cardCvc,
-          cardholderName: data.cardholderName
+          cardholderName: data.cardholderName,
+          country: data.country || 'us'
         });
 
         // Wait for redirect to success or cancel URL (timeout: 60 seconds)

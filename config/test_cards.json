@@ -1,0 +1,93 @@
+{
+  "visa_success": {
+    "card_number": "4242424242424242",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "success",
+    "description": "Visa - Payment succeeds"
+  },
+  "mastercard_success": {
+    "card_number": "5555555555554444",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "success",
+    "description": "Mastercard - Payment succeeds"
+  },
+  "amex_success": {
+    "card_number": "378282246310005",
+    "card_expiry": "12/34",
+    "card_cvc": "1234",
+    "cardholder_name": "Test User",
+    "expected_result": "success",
+    "description": "American Express - Payment succeeds"
+  },
+  "card_declined": {
+    "card_number": "4000000000000002",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Generic decline"
+  },
+  "card_insufficient_funds": {
+    "card_number": "4000000000009995",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Insufficient funds"
+  },
+  "card_lost": {
+    "card_number": "4000000000009987",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Lost card"
+  },
+  "card_stolen": {
+    "card_number": "4000000000009979",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Stolen card"
+  },
+  "card_expired": {
+    "card_number": "4000000000000069",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Expired card"
+  },
+  "card_incorrect_cvc": {
+    "card_number": "4000000000000127",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Incorrect CVC"
+  },
+  "card_processing_error": {
+    "card_number": "4000000000000119",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Processing error"
+  },
+  "card_fraud": {
+    "card_number": "4100000000000019",
+    "card_expiry": "12/34",
+    "card_cvc": "123",
+    "cardholder_name": "Test User",
+    "expected_result": "declined",
+    "description": "Fraud detection triggered"
+  }
+}
+
+
+

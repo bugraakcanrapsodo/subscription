@@ -1,0 +1,49 @@
+# Ignore files that shouldn't be copied into Docker image
+# This speeds up build context transfer
+
+# Node modules (will be installed in container)
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Output directories (generated at runtime)
+output/
+screenshots/
+videos/
+logs/
+attachments/
+
+# VPN configs (mounted as volume)
+vpn-configs/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+
+

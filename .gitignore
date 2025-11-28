@@ -1,11 +1,21 @@
 # Ignore all .pyc files
 *.pyc
 venv
+.venv
 .DS_Store
 .vscode
 pro20Data/keys.yaml
 pro20Data/keysProd.yaml
 /logs
+/test_results
+/data/codes
+/data/manual_test_cases
+/data/responses
+/docs
+
+# Environment variables
+.env
+.env.local
 
 # Docker
 docker/playwright-service/output/screenshots/*.png

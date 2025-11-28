@@ -11,7 +11,8 @@ from models.subscription import (
     GetSubscriptionsResponse,
     CancelWebSubscriptionResponse,
     ReactivateWebSubscriptionResponse,
-    GetAGLicenseResponse
+    GetAGLicenseResponse,
+    GetAdminSubscriptionsResponse
 )
 
 
@@ -33,6 +34,12 @@ class MlmAPI(BaseAPIClient):
             env: Environment to use (test, staging, prod)
         """
         super().__init__(env)
+        self.admin_token = None  # Store admin token separately
+        
+        # Set mlmVersion: 2 header (required for /subscription endpoint to return data)
+        # The API encodes this into the JWT token during login
+        self.session.headers.update({"mlmVersion": "2"})
+        
         self.logger.info("MlmAPI client initialized")
     
     def register(
@@ -464,4 +471,97 @@ class MlmAPI(BaseAPIClient):
             self.logger.warning(f"Failed to delete user account: {response.message}")
         
         return response
+    
+    # ==================== Admin API Methods ====================
+    
+    def admin_login(self, email: str, password: str) -> APIResponse:
+        """
+        Admin login with email and password
+        
+        API Endpoint: POST /auth/admin/login
+        
+        Args:
+            email: Admin email address
+            password: Admin password
+        
+        Returns:
+            APIResponse: Response containing admin JWT token
+        
+        Note: Admin token is stored separately from user token
+        
+        Example:
+            >>> mlm = MlmAPI()
+            >>> response = mlm.admin_login("admin@rapsodo.com", "admin_password")
+            >>> if response.is_success():
+            ...     print(f"Admin logged in: {mlm.admin_token}")
+        """
+        endpoint = "/auth/admin/login"
+        body = {
+            "email": email,
+            "password": password
+        }
+        
+        self.logger.info(f"Admin login: {email}")
+        response = self.post(endpoint, json_data=body)
+        
+        # Store admin token separately if login successful
+        if response.is_success():
+            admin_token = response.json_data.get('token')
+            
+            if admin_token:
+                self.admin_token = admin_token
+                self.logger.info("Admin token stored successfully")
+            else:
+                self.logger.warning("Admin login successful but no token found in response")
+        
+        return response
+    
+    def get_admin_subscriptions(self) -> GetAdminSubscriptionsResponse:
+        """
+        Get all subscriptions from admin panel
+        
+        API Endpoint: GET /subscription/admin
+        
+        Returns:
+            GetAdminSubscriptionsResponse: Pydantic model with all subscriptions
+        
+        Note: Requires admin token to be set via admin_login()
+        
+        Example:
+            >>> mlm = MlmAPI()
+            >>> mlm.admin_login("admin@rapsodo.com", "admin_password")
+            >>> admin_subs = mlm.get_admin_subscriptions()
+            >>> 
+            >>> # Find subscription by email
+            >>> user_sub = admin_subs.get_subscription_by_email("test@example.com")
+            >>> if user_sub:
+            ...     print(f"User {user_sub.email} has subscription {user_sub.id}")
+        """
+        endpoint = "/subscription/admin"
+        
+        if not self.admin_token:
+            raise Exception("Admin token not set. Please call admin_login() first.")
+        
+        # Temporarily switch to admin token
+        original_token = getattr(self, '_stored_token', None)
+        self._stored_token = self.admin_token
+        self.session.headers.update({'Authorization': self.admin_token})
+        
+        try:
+            self.logger.info("Getting all subscriptions from admin panel")
+            # Disable response body logging - this endpoint returns thousands of subscriptions
+            response = self.get(endpoint, log_response_body=False)
+            
+            if response.is_success():
+                # Parse response into Pydantic model
+                admin_subs_data = GetAdminSubscriptionsResponse(**response.json_data)
+                self.logger.info(f"Found {len(admin_subs_data.subscriptions)} subscription(s) in admin panel")
+                return admin_subs_data
+            else:
+                raise Exception(f"Failed to get admin subscriptions: {response.message}")
+        finally:
+            # Restore original user token
+            if original_token:
+                self._stored_token = original_token
+                self.session.headers.update({'Authorization': original_token})
     

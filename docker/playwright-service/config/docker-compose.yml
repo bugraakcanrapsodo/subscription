@@ -6,12 +6,25 @@ services:
     container_name: stripe-playwright-service
     ports:
       - "3001:3000"
+    env_file:
+      - ../../../.env
     environment:
       - PORT=3000
       - DEBUG_MODE=false
+      - VPN_ENABLED=true
     volumes:
       - ../output/screenshots:/app/output/screenshots
       - ../output/videos:/app/output/videos
       - ../output/logs:/app/output/logs
       - ../output/attachments:/app/output/attachments
+      - mullvad-data:/etc/mullvad-vpn # Persist Mullvad settings to reuse device
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun
     restart: unless-stopped
+
+volumes:
+  mullvad-data:
+    name: mullvad-vpn-data

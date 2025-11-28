@@ -1,21 +1,65 @@
 """
 Test Fixtures
 Provides reusable fixtures for all tests
+
+ARCHITECTURE NOTE:
+- All pytest fixtures are defined HERE (single source of truth)
+- Fixtures are imported in conftest.py via "from fixtures import *"
+- Test classes (TestExecutor, ActionExecutor, etc.) are regular Python classes
+- They receive dependencies (mlm_api, playwright_service_url) via constructor
+  because they CANNOT directly access pytest fixtures
+- Only test FUNCTIONS (not classes) can use pytest fixtures via parameters
 """
 
 import os
 import pytest
 from datetime import datetime
 from api.mlm_api import MlmAPI
+from test_engine.executor import TestExecutor
 from base.logger import Logger
 from base.xray_api import XrayApi
 from base.step_tracker import XRayStepTracker
 
 
-@pytest.fixture
+# ==================== API Fixtures ====================
+
+@pytest.fixture(scope="session")
 def mlm_api():
-    """Fixture to create MlmAPI client"""
-    return MlmAPI()
+    """Fixture to create MlmAPI client (session-scoped for data-driven tests)"""
+    return MlmAPI(env='test')
+
+
+# ==================== Data-Driven Test Fixtures ====================
+
+@pytest.fixture(scope="session")
+def test_config(pytestconfig):
+    """Get test configuration from command line options"""
+    return {
+        'excel_file': pytestconfig.getoption("--excel"),
+        'test_id': pytestconfig.getoption("--test-id"),
+        'playwright_url': pytestconfig.getoption("--playwright-url"),
+        'cleanup_users': pytestconfig.getoption("--cleanup-users")
+    }
+
+
+@pytest.fixture(scope="session")
+def test_executor(mlm_api, test_config):
+    """
+    Create test executor for data-driven tests
+    
+    Note: TestExecutor is a regular Python class, not a pytest test.
+    It needs mlm_api and playwright_service_url passed to its constructor
+    because it can't directly access pytest fixtures.
+    """
+    executor = TestExecutor(
+        mlm_api=mlm_api,
+        playwright_service_url=test_config['playwright_url'],
+        cleanup_users=test_config['cleanup_users']
+    )
+    return executor
+
+
+# ==================== User Setup Fixtures ====================
 
 
 @pytest.fixture
@@ -29,6 +73,7 @@ def test_user_email():
 def registered_user(mlm_api, test_user_email):
     """
     Fixture to create and return a registered user with login token
+    Note: Does NOT register device - use trial_active_user or trial_inactive_user for that
     
     Returns:
         dict: {
@@ -57,6 +102,130 @@ def registered_user(mlm_api, test_user_email):
         'user_data': register_response.data,
         'token': login_response.data['token'],
         'mlm_api': mlm_api
+    }
+
+
+@pytest.fixture
+def trial_active_user(mlm_api, test_user_email):
+    """
+    Fixture to create a user with ACTIVE trial status (trial eligible)
+    
+    Trial eligibility is determined by device serial number:
+    - NEW/UNIQUE serial number → Trial eligible
+    
+    Trial periods by plan:
+    - 1y_premium: 45 days trial
+    - 2y_premium: 45 days trial
+    - 1y_platinum: 30 days trial
+    
+    Returns:
+        dict: {
+            'email': str,
+            'password': str,
+            'user_data': dict,
+            'token': str,
+            'mlm_api': MlmAPI,
+            'device_serial': str (unique serial),
+            'trial_status': str ('Active')
+        }
+    """
+    logger = Logger(__name__)
+    
+    # Register user
+    register_response = mlm_api.register(email=test_user_email)
+    
+    if not register_response.is_success():
+        pytest.fail(f"Failed to register user: {register_response.message}")
+    
+    # Login
+    login_response = mlm_api.login(email=test_user_email, password="Aa123456")
+    
+    if not login_response.is_success():
+        pytest.fail(f"Failed to login user: {login_response.message}")
+    
+    # Register device with UNIQUE serial number (trial eligible)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_serial = f"M2P{timestamp}"  # Unique serial based on timestamp
+    unique_mac = f"AA:BB:CC:DD:EE:{datetime.now().strftime('%S')}"
+    
+    device_response = mlm_api.register_device(
+        registered_mac=unique_mac,
+        registered_serial=unique_serial
+    )
+    
+    if not device_response.is_success():
+        logger.warning(f"Device registration failed: {device_response.message}")
+    else:
+        logger.info(f"Device registered with unique serial: {unique_serial} (TRIAL ELIGIBLE)")
+    
+    return {
+        'email': test_user_email,
+        'password': "Aa123456",
+        'user_data': register_response.data,
+        'token': login_response.data['token'],
+        'mlm_api': mlm_api,
+        'device_serial': unique_serial,
+        'trial_status': 'Active'
+    }
+
+
+@pytest.fixture
+def trial_inactive_user(mlm_api, test_user_email):
+    """
+    Fixture to create a user with INACTIVE trial status (NOT trial eligible)
+    
+    Trial eligibility is determined by device serial number:
+    - KNOWN trial serial number → Trial NOT eligible
+    
+    Uses static serial: "M2P122827570" (known trial device)
+    
+    Returns:
+        dict: {
+            'email': str,
+            'password': str,
+            'user_data': dict,
+            'token': str,
+            'mlm_api': MlmAPI,
+            'device_serial': str (known trial serial),
+            'trial_status': str ('None')
+        }
+    """
+    logger = Logger(__name__)
+    
+    # Register user
+    register_response = mlm_api.register(email=test_user_email)
+    
+    if not register_response.is_success():
+        pytest.fail(f"Failed to register user: {register_response.message}")
+    
+    # Login
+    login_response = mlm_api.login(email=test_user_email, password="Aa123456")
+    
+    if not login_response.is_success():
+        pytest.fail(f"Failed to login user: {login_response.message}")
+    
+    # Register device with KNOWN trial serial (trial NOT eligible)
+    known_trial_serial = "M2P122827570"  # Static known trial device
+    unique_mac = f"AA:BB:CC:DD:EE:{datetime.now().strftime('%S')}"
+    
+    device_response = mlm_api.register_device(
+        registered_mac=unique_mac,
+        registered_serial=known_trial_serial
+    )
+    
+    if not device_response.is_success():
+        logger.warning(f"Device registration failed: {device_response.message}")
+    else:
+        logger.info(f"Device registered with known trial serial: {known_trial_serial} (TRIAL NOT ELIGIBLE)")
+    
+    return {
+        'email': test_user_email,
+        'password': "Aa123456",
+        'user_data': register_response.data,
+        'token': login_response.data['token'],
+        'mlm_api': mlm_api,
+        'device_serial': known_trial_serial,
+        'trial_status': 'None'
     }
 
 

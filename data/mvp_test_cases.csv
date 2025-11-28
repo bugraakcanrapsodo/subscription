@@ -1,0 +1,8 @@
+test_id,test_name,country,trial_status,action_1,param_1,action_2,param_2,action_3,param_3
+MVP001,Purchase 1Y Premium - Trial Eligible - United States,us,Active,purchase_1y_premium,visa_success,,,,
+MVP002,Purchase 1Y Premium - No Trial - Canada,ca,None,purchase_1y_premium,visa_success,,,,
+MVP003,Purchase 1Y Premium - Trial Eligible - Australia,au,Active,purchase_1y_premium,mastercard_success,,,,
+MVP004,Purchase 2Y Premium - Trial Eligible - Japan,jp,Active,purchase_2y_premium,visa_success,,,,
+MVP005,Purchase 1Y Platinum - No Trial - United Kingdom,gb,None,purchase_1y_platinum,visa_success,,,,
+,,,,,,,,,
+,,,,,,,,,

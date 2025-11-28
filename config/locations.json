@@ -1,0 +1,205 @@
+{
+  "locations": {
+    "al": {
+      "name": "Albania",
+      "currency": "usd"
+    },
+    "ar": {
+      "name": "Argentina",
+      "currency": "usd"
+    },
+    "au": {
+      "name": "Australia",
+      "currency": "aud"
+    },
+    "at": {
+      "name": "Austria",
+      "currency": "eur"
+    },
+    "be": {
+      "name": "Belgium",
+      "currency": "eur"
+    },
+    "br": {
+      "name": "Brazil",
+      "currency": "usd"
+    },
+    "bg": {
+      "name": "Bulgaria",
+      "currency": "usd"
+    },
+    "ca": {
+      "name": "Canada",
+      "currency": "cad"
+    },
+    "cl": {
+      "name": "Chile",
+      "currency": "usd"
+    },
+    "co": {
+      "name": "Colombia",
+      "currency": "usd"
+    },
+    "hr": {
+      "name": "Croatia",
+      "currency": "eur"
+    },
+    "cy": {
+      "name": "Cyprus",
+      "currency": "eur"
+    },
+    "cz": {
+      "name": "Czech Republic",
+      "currency": "usd"
+    },
+    "dk": {
+      "name": "Denmark",
+      "currency": "usd"
+    },
+    "ee": {
+      "name": "Estonia",
+      "currency": "eur"
+    },
+    "fi": {
+      "name": "Finland",
+      "currency": "eur"
+    },
+    "fr": {
+      "name": "France",
+      "currency": "eur"
+    },
+    "de": {
+      "name": "Germany",
+      "currency": "eur"
+    },
+    "gr": {
+      "name": "Greece",
+      "currency": "eur"
+    },
+    "hk": {
+      "name": "Hong Kong",
+      "currency": "usd"
+    },
+    "hu": {
+      "name": "Hungary",
+      "currency": "usd"
+    },
+    "id": {
+      "name": "Indonesia",
+      "currency": "usd"
+    },
+    "ie": {
+      "name": "Ireland",
+      "currency": "eur"
+    },
+    "il": {
+      "name": "Israel",
+      "currency": "usd"
+    },
+    "it": {
+      "name": "Italy",
+      "currency": "eur"
+    },
+    "jp": {
+      "name": "Japan",
+      "currency": "jpy"
+    },
+    "my": {
+      "name": "Malaysia",
+      "currency": "usd"
+    },
+    "mx": {
+      "name": "Mexico",
+      "currency": "usd"
+    },
+    "nl": {
+      "name": "Netherlands",
+      "currency": "eur"
+    },
+    "nz": {
+      "name": "New Zealand",
+      "currency": "usd"
+    },
+    "ng": {
+      "name": "Nigeria",
+      "currency": "usd"
+    },
+    "no": {
+      "name": "Norway",
+      "currency": "usd"
+    },
+    "pe": {
+      "name": "Peru",
+      "currency": "usd"
+    },
+    "ph": {
+      "name": "Philippines",
+      "currency": "usd"
+    },
+    "pl": {
+      "name": "Poland",
+      "currency": "usd"
+    },
+    "pt": {
+      "name": "Portugal",
+      "currency": "eur"
+    },
+    "ro": {
+      "name": "Romania",
+      "currency": "usd"
+    },
+    "rs": {
+      "name": "Serbia",
+      "currency": "usd"
+    },
+    "sg": {
+      "name": "Singapore",
+      "currency": "sgd"
+    },
+    "sk": {
+      "name": "Slovakia",
+      "currency": "eur"
+    },
+    "si": {
+      "name": "Slovenia",
+      "currency": "eur"
+    },
+    "za": {
+      "name": "South Africa",
+      "currency": "usd"
+    },
+    "es": {
+      "name": "Spain",
+      "currency": "eur"
+    },
+    "se": {
+      "name": "Sweden",
+      "currency": "usd"
+    },
+    "ch": {
+      "name": "Switzerland",
+      "currency": "usd"
+    },
+    "th": {
+      "name": "Thailand",
+      "currency": "usd"
+    },
+    "tr": {
+      "name": "Turkey",
+      "currency": "usd"
+    },
+    "gb": {
+      "name": "United Kingdom",
+      "currency": "gbp"
+    },
+    "us": {
+      "name": "United States",
+      "currency": "usd"
+    },
+    "ua": {
+      "name": "Ukraine",
+      "currency": "usd"
+    }
+  },
+  "default_currency": "usd"
+}
