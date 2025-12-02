@@ -40,7 +40,11 @@ class AdminVerifier:
         expected_plan_code: int = None,
         expected_duration_days: int = None,
         expected_trial_period_days: int = None,
-        check_dates: bool = False
+        expected_start_date: str = None,
+        expected_expire_date: str = None,
+        check_dates: bool = False,
+        subscription_state: Dict[str, Any] = None,
+        action_type: str = None
     ) -> Dict[str, Any]:
         """
         Verify subscription via Admin API
@@ -64,16 +68,23 @@ class AdminVerifier:
             # Note: Executor already waits 2s for webhook processing before calling verifiers
             admin_subs = self.mlm_api.get_admin_subscriptions()
             
-            # Find user's subscription
-            admin_sub = admin_subs.get_subscription_by_email(user_email)
+            # Find user's subscriptions (may be multiple after time advancement)
+            all_admin_subs = admin_subs.get_all_subscriptions_by_email(user_email)
             
-            if not admin_sub:
+            if not all_admin_subs:
                 self.logger.info(f"No subscription found in admin panel for {user_email} (may be expected for free/cancelled users)")
                 return {
                     'verified': False,
                     'message': f'Subscription not found in admin panel for {user_email}',
                     'admin_subscription': None
                 }
+            
+            # Select the correct subscription based on simulated time
+            state_days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+            admin_sub = self._select_admin_subscription_at_simulated_time(
+                all_subscriptions=all_admin_subs,
+                state_days_advanced=state_days_advanced
+            )
             
             # Get status and type names
             status_codes = self.subscriptions_config.get('status_codes', {})
@@ -111,14 +122,23 @@ class AdminVerifier:
                     "Use user endpoint verification for plan code."
                 )
             
-            # Calculate trial period from dates if status is trial (3)
+            # Calculate trial period from dates if status is trial (3) or cancelled (4)
+            # For cancelled subscriptions, we need to know if they were cancelled during trial
             trial_period_days = None
-            if actual_status_code == 3 and admin_sub.startDate and admin_sub.expireDate:
+            if actual_status_code in [3, 4] and admin_sub.startDate and admin_sub.expireDate:
                 try:
                     start_date = datetime.fromisoformat(admin_sub.startDate.replace('Z', '+00:00'))
                     expire_date = datetime.fromisoformat(admin_sub.expireDate.replace('Z', '+00:00'))
-                    trial_period_days = (expire_date - start_date).days
-                    self.logger.info(f"  Trial Period: {trial_period_days} days (calculated from dates)")
+                    duration_days = (expire_date - start_date).days
+                    
+                    # If duration matches expected trial period, set trial_period_days
+                    # Trial periods are typically 30, 45, or 60 days
+                    if expected_trial_period_days and abs(duration_days - expected_trial_period_days) <= 1:
+                        trial_period_days = duration_days
+                        self.logger.info(f"  Trial Period: {trial_period_days} days (calculated from dates)")
+                    elif duration_days < 90:  # Assume anything < 90 days is likely a trial
+                        trial_period_days = duration_days
+                        self.logger.info(f"  Possible Trial Period: {trial_period_days} days (calculated from dates)")
                 except Exception as e:
                     self.logger.warning(f"Could not calculate trial period: {e}")
             
@@ -134,13 +154,33 @@ class AdminVerifier:
                     self.logger.info(f"  Expire date: {expire_date}")
                     self.logger.info(f"  Now: {now}")
                     
-                    # Check that start date is recent (within last hour)
-                    time_since_start = (now - start_date).total_seconds()
-                    if time_since_start < 0 or time_since_start > 3600:
-                        verification_issues.append(
-                            f"Start date seems incorrect: {admin_sub.startDate} "
-                            f"(expected within last hour)"
-                        )
+                    # Check start date validity
+                    state_days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+                    state_prev_expire_date = subscription_state.get('expire_date') if subscription_state else None
+                    
+                    # Skip "within last hour" check if time has been advanced OR if current action is advance_time
+                    if action_type == 'advance_time' or state_days_advanced > 0:
+                        # Time advancement scenario - start date should match previous subscription's expire date
+                        if state_prev_expire_date and state_days_advanced > 0:
+                            expected_start = datetime.fromisoformat(state_prev_expire_date.replace('Z', '+00:00'))
+                            time_diff = abs((start_date - expected_start).total_seconds())
+                            if time_diff > 60:  # Allow 1 minute tolerance
+                                verification_issues.append(
+                                    f"Start date mismatch after time advance: {admin_sub.startDate} "
+                                    f"(expected: {state_prev_expire_date}, difference: {time_diff/60:.1f} minutes)"
+                                )
+                            else:
+                                self.logger.info(f"  ✓ Start date matches previous expire date")
+                        else:
+                            self.logger.info(f"  Skipping start date check (time has been advanced or is being advanced)")
+                    else:
+                        # For initial purchase: check that start date is recent (within last hour)
+                        time_since_start = (now - start_date).total_seconds()
+                        if time_since_start < 0 or time_since_start > 3600:
+                            verification_issues.append(
+                                f"Start date seems incorrect: {admin_sub.startDate} "
+                                f"(expected within last hour)"
+                            )
                     
                     # Calculate duration
                     duration_days = (expire_date - start_date).days
@@ -148,6 +188,10 @@ class AdminVerifier:
                     
                 except Exception as date_error:
                     verification_issues.append(f"Date parsing error: {str(date_error)}")
+            
+            # Note: expected_start_date and expected_expire_date are passed from User API verification
+            # to ensure consistency between User API and Admin API verifications
+            # They are already calculated in user_verifier.py based on subscription state
             
             # Return result
             if verification_issues:
@@ -159,6 +203,8 @@ class AdminVerifier:
                     'expected_subscription_type': 2,  # Web type
                     'expected_duration_days': expected_duration_days,
                     'expected_trial_period_days': expected_trial_period_days,
+                    'expected_start_date': expected_start_date,  # For time advancement scenarios
+                    'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'admin_subscription': {
                         'id': admin_sub.id,
                         'userId': admin_sub.userId,
@@ -181,6 +227,8 @@ class AdminVerifier:
                     'expected_subscription_type': 2,  # Web type
                     'expected_duration_days': expected_duration_days,
                     'expected_trial_period_days': expected_trial_period_days,
+                    'expected_start_date': expected_start_date,  # For time advancement scenarios
+                    'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'admin_subscription': {
                         'id': admin_sub.id,
                         'userId': admin_sub.userId,
@@ -312,4 +360,63 @@ class AdminVerifier:
             if sub_config.get('code') == plan_code:
                 return sub_config
         return None
+    
+    def _select_admin_subscription_at_simulated_time(
+        self,
+        all_subscriptions: list,
+        state_days_advanced: int = 0
+    ):
+        """
+        Select the correct admin subscription based on simulated time
+        
+        When time is advanced, multiple subscriptions may exist for the same user.
+        We need to select the one that is "active" at the simulated current time.
+        
+        Args:
+            all_subscriptions: List of AdminSubscription objects for a user
+            state_days_advanced: Total days advanced via advance_time actions
+            
+        Returns:
+            The subscription that is active at the simulated time
+        """
+        # If no time advancement or only one subscription, return first/only one
+        if state_days_advanced == 0 or len(all_subscriptions) == 1:
+            return all_subscriptions[0]
+        
+        # Time has been advanced - need to find the subscription active at simulated time
+        self.logger.info(f"Time advanced by {state_days_advanced} days, selecting admin subscription at simulated time")
+        self.logger.info(f"Found {len(all_subscriptions)} subscription(s) for user in admin panel")
+        
+        try:
+            # Sort subscriptions by start date (oldest first)
+            sorted_subs = sorted(all_subscriptions, key=lambda s: s.startDate)
+            
+            # Get the FIRST (original) subscription's start date as reference
+            original_start = datetime.fromisoformat(sorted_subs[0].startDate.replace('Z', '+00:00'))
+            
+            # Calculate simulated current time
+            simulated_now = original_start + timedelta(days=state_days_advanced)
+            
+            self.logger.info(f"Original start date: {original_start}")
+            self.logger.info(f"Simulated current time: {simulated_now}")
+            
+            # Find the subscription that contains simulated_now
+            for i, sub in enumerate(sorted_subs):
+                start_date = datetime.fromisoformat(sub.startDate.replace('Z', '+00:00'))
+                expire_date = datetime.fromisoformat(sub.expireDate.replace('Z', '+00:00'))
+                
+                self.logger.info(f"  Admin Sub {i+1} (ID: {sub.subscriptionId}): {start_date} to {expire_date}")
+                
+                # Check if simulated_now falls within this subscription period
+                if start_date <= simulated_now <= expire_date:
+                    self.logger.info(f"  ✓ Selected admin subscription ID {sub.subscriptionId} (active at simulated time)")
+                    return sub
+            
+            # If no subscription contains simulated_now, return the latest
+            self.logger.warning(f"No admin subscription contains simulated time, using latest")
+            return sorted_subs[-1]
+        
+        except Exception as e:
+            self.logger.error(f"Error selecting admin subscription at simulated time: {e}")
+            return all_subscriptions[0]
 

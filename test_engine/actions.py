@@ -63,13 +63,19 @@ class ActionExecutor:
         self.logger.info(f"Loaded {len(self.actions_config)} action(s) from configuration")
         self.logger.info(f"Loaded {len(self.test_cards_config)} test card(s) from configuration")
     
-    def execute_action(self, action_name: str, param: Optional[str] = None) -> Dict[str, Any]:
+    def execute_action(
+        self, 
+        action_name: str, 
+        param: Optional[str] = None,
+        subscription_state: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Execute a single action
         
         Args:
             action_name: Action identifier (e.g., 'purchase_1y_premium')
             param: Action parameter (e.g., 'visa_success')
+            subscription_state: Current subscription state (for advance_time calculations)
             
         Returns:
             Result dictionary with status and details
@@ -85,8 +91,18 @@ class ActionExecutor:
         # Route to appropriate handler based on action type
         action_type = action_config.get('action_type')
         
+        # Note: Actions that change subscription type (purchase, upgrade, downgrade) 
+        # MUST return 'subscription_type' in their result dict so the executor can 
+        # track the latest active subscription across multiple actions
         if action_type == 'purchase':
             return self._execute_purchase_action(action_name, action_config, param)
+        elif action_type == 'cancel':
+            return self._execute_cancel_action(action_name, action_config)
+        elif action_type == 'reactivate':
+            return self._execute_reactivate_action(action_name, action_config)
+        elif action_type == 'advance_time':
+            return self._execute_advance_time_action(action_name, action_config, param, subscription_state)
+        # TODO: Implement upgrade, downgrade actions (must return subscription_type)
         else:
             raise NotImplementedError(f"Action type not implemented: {action_type}")
     
@@ -353,6 +369,231 @@ class ActionExecutor:
             self.logger.error(f"Error calling Playwright service: {str(e)}")
             return {
                 'success': False,
+                'error': str(e)
+            }
+    
+    def _execute_cancel_action(self, action_name: str, action_config: Dict) -> Dict[str, Any]:
+        """
+        Execute a cancel subscription action
+        
+        Args:
+            action_name: Action name
+            action_config: Action configuration
+            
+        Returns:
+            Result dictionary
+        """
+        self.logger.info(f"Executing cancel action: {action_name}")
+        
+        try:
+            # Call the MLM API to cancel subscription
+            self.logger.info("Calling MLM API to cancel web subscription...")
+            cancel_response = self.mlm_api.cancel_web_subscription()
+            
+            if cancel_response.success:
+                self.logger.info("✓ Subscription cancelled successfully")
+                return {
+                    'success': True,
+                    'message': 'Subscription cancelled successfully',
+                    'action': action_name,
+                    'api_response': {
+                        'success': cancel_response.success
+                    }
+                }
+            else:
+                self.logger.error("✗ Subscription cancellation failed")
+                return {
+                    'success': False,
+                    'message': 'Subscription cancellation failed',
+                    'api_response': {
+                        'success': cancel_response.success
+                    }
+                }
+        
+        except Exception as e:
+            self.logger.error(f"Error executing cancel action: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Exception during cancel: {str(e)}',
+                'error': str(e)
+            }
+    
+    def _execute_reactivate_action(self, action_name: str, action_config: Dict) -> Dict[str, Any]:
+        """
+        Execute a reactivate subscription action
+        
+        Args:
+            action_name: Action name
+            action_config: Action configuration
+            
+        Returns:
+            Result dictionary
+        """
+        self.logger.info(f"Executing reactivate action: {action_name}")
+        
+        try:
+            # Call the MLM API to reactivate subscription
+            self.logger.info("Calling MLM API to reactivate web subscription...")
+            reactivate_response = self.mlm_api.reactivate_web_subscription()
+            
+            if reactivate_response.success:
+                self.logger.info("✓ Subscription reactivated successfully")
+                return {
+                    'success': True,
+                    'message': 'Subscription reactivated successfully',
+                    'action': action_name,
+                    'api_response': {
+                        'success': reactivate_response.success
+                    }
+                }
+            else:
+                self.logger.error("✗ Subscription reactivation failed")
+                return {
+                    'success': False,
+                    'message': 'Subscription reactivation failed',
+                    'api_response': {
+                        'success': reactivate_response.success
+                    }
+                }
+        
+        except Exception as e:
+            self.logger.error(f"Error executing reactivate action: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Exception during reactivate: {str(e)}',
+                'error': str(e)
+            }
+    
+    def _execute_advance_time_action(
+        self, 
+        action_name: str, 
+        action_config: Dict, 
+        param: Optional[str],
+        subscription_state: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute time advancement action (MANUAL INTERVENTION REQUIRED)
+        
+        This action pauses the framework and waits for the tester to manually advance time
+        in Stripe Dashboard, then confirm the advancement.
+        
+        Args:
+            action_name: Action name
+            action_config: Action configuration
+            param: Number of days to advance (as string)
+            subscription_state: Current subscription state with days_advanced tracking
+            
+        Returns:
+            Result dictionary
+        """
+        from datetime import datetime, timedelta
+        
+        self.logger.info(f"Executing advance_time action: {action_name}")
+        
+        try:
+            # Parse days parameter
+            if not param:
+                raise ValueError("advance_time requires 'days' parameter (e.g., 46)")
+            
+            try:
+                days_to_advance = int(param)
+            except ValueError:
+                raise ValueError(f"advance_time parameter must be an integer (days), got: {param}")
+            
+            if days_to_advance <= 0:
+                raise ValueError(f"advance_time days must be positive, got: {days_to_advance}")
+            
+            self.logger.info(f"Requested time advancement: {days_to_advance} days")
+            
+            # Get user information for instructions
+            user_data = self.mlm_api.get_user_data()
+            user_email = user_data.get('email', 'N/A')
+            user_id = user_data.get('_id', 'N/A')
+            
+            # Calculate simulated current date and target date
+            # Use the subscription start date + previously advanced days
+            subscriptions = self.mlm_api.get_subscriptions()
+            if subscriptions.subscriptions:
+                # Get the FIRST (original) subscription's start date
+                # Note: API returns newest first, so the last one is the original
+                original_sub = subscriptions.subscriptions[-1]
+                start_date = datetime.fromisoformat(original_sub.startDate.replace('Z', '+00:00'))
+                
+                # Get previously advanced days from subscription_state
+                days_already_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+                
+                # Calculate simulated current date
+                simulated_current = start_date + timedelta(days=days_already_advanced)
+                
+                # Calculate target date in UTC
+                target_date_utc = simulated_current + timedelta(days=days_to_advance)
+                
+                # Convert to Singapore time (GMT+8) for display
+                target_date_sg = target_date_utc + timedelta(hours=8)
+                target_date_str = target_date_sg.strftime("%b %d, %Y at %H:%M")
+                
+                self.logger.info(f"Original start date: {start_date}")
+                self.logger.info(f"Days already advanced: {days_already_advanced}")
+                self.logger.info(f"Simulated current date: {simulated_current}")
+                self.logger.info(f"Target date UTC (+ {days_to_advance} days): {target_date_utc}")
+                self.logger.info(f"Target date Singapore (GMT+8): {target_date_sg}")
+            else:
+                target_date_str = f"{days_to_advance} days from current simulated time"
+            
+            # Display manual intervention instructions
+            print("\n" + "=" * 80)
+            print("⏰ MANUAL TIME ADVANCEMENT REQUIRED")
+            print("=" * 80)
+            print(f"User Email: {user_email}")
+            print(f"User ID: {user_id}")
+            print(f"Days to Advance: {days_to_advance} days")
+            print("\nINSTRUCTIONS:")
+            print("1. Open Stripe Dashboard (Test Mode)")
+            print(f"2. Search for customer email: {user_email}")
+            print("3. Click on the customer's active subscription")
+            print("4. Click 'Advanced time' or 'Run simulation' button")
+            print(f"5. Enter the exact date and time: {target_date_str} (GMT+8)")
+            print("6. Click 'Advance time' button in Stripe")
+            print("7. Verify the time was advanced successfully")
+            print("8. Return here and press ENTER to continue")
+            print("=" * 80)
+            
+            # Wait for user confirmation
+            input("\nPress ENTER after you have manually advanced time in Stripe Dashboard...")
+            
+            # Ask for actual days advanced (in case tester advanced different amount)
+            while True:
+                actual_days_input = input(f"How many days did you actually advance? [{days_to_advance}]: ").strip()
+                if not actual_days_input:
+                    actual_days_advanced = days_to_advance
+                    break
+                try:
+                    actual_days_advanced = int(actual_days_input)
+                    if actual_days_advanced > 0:
+                        break
+                    else:
+                        print("Please enter a positive number of days")
+                except ValueError:
+                    print("Please enter a valid integer")
+            
+            self.logger.info(f"✓ Time advanced: {actual_days_advanced} days (requested: {days_to_advance})")
+            
+            if actual_days_advanced != days_to_advance:
+                self.logger.warning(f"⚠ Actual days ({actual_days_advanced}) differs from requested ({days_to_advance})")
+            
+            return {
+                'success': True,
+                'message': f'Time advanced by {actual_days_advanced} days (manual)',
+                'action': action_name,
+                'days_requested': days_to_advance,
+                'days_advanced': actual_days_advanced
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error executing advance_time action: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Exception during advance_time: {str(e)}',
                 'error': str(e)
             }
 

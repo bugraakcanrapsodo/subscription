@@ -15,6 +15,7 @@ from test_engine.user_verifier import UserVerifier
 from test_engine.admin_verifier import AdminVerifier
 from test_engine.reporter import Reporter
 from test_engine.location_manager import LocationManager
+import json
 
 
 class TestExecutor:
@@ -108,6 +109,8 @@ class TestExecutor:
         # Generate reports
         self.logger.info("\nGenerating test reports...")
         report_paths = self.reporter.generate_report(test_results)
+        self.logger.info(json.dumps(test_results, indent=2))
+
         
         # Print summary
         self.reporter.print_summary(test_results)
@@ -185,6 +188,21 @@ class TestExecutor:
             
             # Execute each action
             all_actions_passed = True
+            
+            # Track subscription state across all actions
+            # This is needed for verification of cancel/reactivate/advance_time
+            subscription_state = {
+                'subscription_type': None,  # e.g., '1y_premium', '2y_premium'
+                'plan_code': None,  # e.g., 1 (from subscription config)
+                'duration_days': None,  # e.g., 365, 730 (from subscription config)
+                'status_code': None,  # e.g., 1=active, 3=trial, 4=cancelled
+                'start_date': None,  # ISO format
+                'expire_date': None,  # ISO format
+                'trial_period_days': None,  # e.g., 45
+                'is_cancelled': False,  # Whether subscription was cancelled
+                'days_advanced': 0  # Total days advanced via advance_time actions
+            }
+            
             for action_idx, action_data in enumerate(actions, start=1):
                 action_name = action_data['action']
                 param = action_data['param']
@@ -193,7 +211,11 @@ class TestExecutor:
                 
                 try:
                     # Execute action
-                    action_result = self.action_executor.execute_action(action_name, param)
+                    action_result = self.action_executor.execute_action(
+                        action_name, 
+                        param,
+                        subscription_state=subscription_state
+                    )
                     result['action_results'].append({
                         'action': action_name,
                         'param': param,
@@ -201,6 +223,42 @@ class TestExecutor:
                         'message': action_result.get('message'),
                         'details': action_result
                     })
+                    
+                    # Update subscription state from action results
+                    if action_result.get('success'):
+                        action_type = self.action_executor.actions_config[action_name].get('action_type')
+                        
+                        # Track subscription_type from purchase/upgrade/downgrade actions
+                        # Also extract plan_code and duration_days from subscription config
+                        if action_result.get('subscription_type'):
+                            subscription_type = action_result.get('subscription_type')
+                            subscription_state['subscription_type'] = subscription_type
+                            
+                            # Load subscription config to get plan_code and duration_days
+                            from pathlib import Path
+                            import json
+                            config_path = Path(__file__).parent.parent / 'config' / 'subscriptions.json'
+                            with open(config_path, 'r') as f:
+                                subscriptions_config = json.load(f)
+                            
+                            sub_config = subscriptions_config.get(subscription_type, {})
+                            subscription_state['plan_code'] = sub_config.get('code')
+                            subscription_state['duration_days'] = sub_config.get('duration_days')
+                            
+                            self.logger.info(f"Updated subscription metadata: type={subscription_type}, plan_code={subscription_state['plan_code']}, duration_days={subscription_state['duration_days']}")
+                        
+                        # Track cancel status
+                        if action_type == 'cancel':
+                            subscription_state['is_cancelled'] = True
+                            self.logger.info("Subscription marked as cancelled")
+                        elif action_type == 'reactivate':
+                            subscription_state['is_cancelled'] = False
+                            self.logger.info("Subscription marked as reactivated")
+                        elif action_type == 'advance_time':
+                            # Track days advanced
+                            days_advanced = action_result.get('days_advanced', 0)
+                            subscription_state['days_advanced'] += days_advanced
+                            self.logger.info(f"Total days advanced: {subscription_state['days_advanced']}")
                     
                     if not action_result.get('success'):
                         all_actions_passed = False
@@ -223,8 +281,27 @@ class TestExecutor:
                     
                     # Verify action result (USER-LEVEL API)
                     self.logger.info(f"Verifying action result (User API)...")
-                    verify_result = self.user_verifier.verify_from_user_api(action_name, action_result)
+                    verify_result = self.user_verifier.verify_from_user_api(
+                        action_name, 
+                        action_result,
+                        subscription_state=subscription_state
+                    )
+                    # Add action context to verification result
+                    verify_result['action_name'] = action_name
+                    verify_result['verification_type'] = 'user_api'
                     result['verification_results'].append(verify_result)
+                    
+                    # Update subscription state from verification result
+                    # Update even if verification failed, as long as we have subscription data
+                    # This ensures subsequent actions have accurate state information
+                    if verify_result.get('subscription'):
+                        sub_data = verify_result['subscription']
+                        subscription_state['status_code'] = sub_data.get('status_code')
+                        subscription_state['start_date'] = sub_data.get('start_date')
+                        subscription_state['expire_date'] = sub_data.get('expire_date')
+                        if sub_data.get('trial_period_days'):
+                            subscription_state['trial_period_days'] = sub_data.get('trial_period_days')
+                        self.logger.debug(f"Updated subscription state from verification (status={sub_data.get('status_code')}, expire={sub_data.get('expire_date')})")
                     
                     if not verify_result.get('verified'):
                         all_actions_passed = False
@@ -257,18 +334,30 @@ class TestExecutor:
                     if self.admin_logged_in:
                         try:
                             # Get expected values from user verification result
+                            # Use the SAME expected values to ensure consistency
                             expected_status_code = verify_result.get('expected_status_code')
                             expected_plan_code = verify_result.get('expected_plan_code')
                             expected_duration_days = verify_result.get('expected_duration_days')
                             expected_trial_period_days = verify_result.get('expected_trial_period_days')
+                            expected_start_date = verify_result.get('expected_start_date')
+                            expected_expire_date = verify_result.get('expected_expire_date')
                             
+                            action_type = self.action_executor.actions_config[action_name].get('action_type')
                             admin_verify_result = self.admin_verifier.verify_from_admin_api(
                                 user_email=user_email,
                                 expected_status_code=expected_status_code,
                                 expected_plan_code=expected_plan_code,
                                 expected_duration_days=expected_duration_days,
-                                expected_trial_period_days=expected_trial_period_days
+                                expected_trial_period_days=expected_trial_period_days,
+                                expected_start_date=expected_start_date,
+                                expected_expire_date=expected_expire_date,
+                                subscription_state=subscription_state,
+                                action_type=action_type
                             )
+                            # Add action context to verification result
+                            admin_verify_result['action_name'] = action_name
+                            admin_verify_result['verification_type'] = 'admin_api'
+                            admin_verify_result['is_non_blocking'] = True  # Admin API failures are warnings only
                             result['verification_results'].append(admin_verify_result)
                             
                             if not admin_verify_result.get('verified'):

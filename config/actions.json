@@ -64,5 +64,49 @@
       "check_trial_period": "auto",
       "expected_plan_code": 12
     }
+  },
+  "cancel": {
+    "action_id": "cancel",
+    "action_name": "Cancel Subscription",
+    "action_type": "cancel",
+    "description": "Cancel the user's active subscription. Can be performed if user has an active subscription or in trial. This will set the subscription to cancel at the end of the current billing period.",
+    "parameters": {},
+    "requires_ui": false,
+    "verification": {
+      "check_subscription_status": true,
+      "check_cancel_at_period_end": true
+    }
+  },
+  "reactivate": {
+    "action_id": "reactivate",
+    "action_name": "Reactivate Subscription",
+    "action_type": "reactivate",
+    "description": "Reactivate a previously cancelled subscription. This will restore the subscription to continue billing at the end of the current period.",
+    "parameters": {},
+    "requires_ui": false,
+    "verification": {
+      "check_subscription_status": true,
+      "check_cancel_at_period_end": false
+    }
+  },
+  "advance_time": {
+    "action_id": "advance_time",
+    "action_name": "Advance Time (Manual)",
+    "action_type": "advance_time",
+    "description": "Manually advance time in Stripe Dashboard. Framework pauses and waits for tester to advance time, then calculates expected subscription status based on days advanced.",
+    "parameters": {
+      "days": {
+        "description": "Number of days to advance (e.g., 46 for trial expiration, 366 for 1-year renewal)",
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "requires_ui": false,
+    "is_manual": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "calculate_status_from_time_advance": true
+    }
   }
 }

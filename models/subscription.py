@@ -234,7 +234,7 @@ class GetAdminSubscriptionsResponse(BaseModel):
     
     def get_subscription_by_email(self, email: str) -> Optional[AdminSubscription]:
         """
-        Find subscription by user email
+        Find subscription by user email (returns first match)
         
         Args:
             email: User email address
@@ -246,6 +246,20 @@ class GetAdminSubscriptionsResponse(BaseModel):
             if sub.email.lower() == email.lower():
                 return sub
         return None
+    
+    def get_all_subscriptions_by_email(self, email: str) -> List[AdminSubscription]:
+        """
+        Find all subscriptions for a user email
+        
+        Useful when time advancement creates multiple subscriptions for the same user.
+        
+        Args:
+            email: User email address
+            
+        Returns:
+            List of AdminSubscription objects (may be empty)
+        """
+        return [sub for sub in self.subscriptions if sub.email.lower() == email.lower()]
     
     def get_subscriptions_by_user_id(self, user_id: int) -> List[AdminSubscription]:
         """
