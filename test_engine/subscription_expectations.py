@@ -1,0 +1,353 @@
+"""
+Subscription Expectations Calculator
+Centralized logic for calculating expected subscription states, dates, and status codes
+"""
+
+import json
+from typing import Dict, Any, Tuple
+from pathlib import Path
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+from base.logger import Logger
+
+
+class SubscriptionExpectations:
+    """
+    Centralized calculator for expected subscription values
+    
+    This class consolidates all logic for calculating:
+    - Expected status codes (trial, active, cancelled, expired)
+    - Expected dates (start and expire dates)
+    - Expected plan codes
+    - Expected trial periods
+    
+    Used by both UserVerifier and AdminVerifier to ensure consistency
+    """
+    
+    def __init__(self, trial_eligible: bool = True):
+        """
+        Initialize expectations calculator
+        
+        Args:
+            trial_eligible: Whether user is trial eligible
+        """
+        self.trial_eligible = trial_eligible
+        self.logger = Logger(__name__)
+        
+        # Load subscription configurations
+        subscriptions_path = Path(__file__).parent.parent / 'config' / 'subscriptions.json'
+        with open(subscriptions_path, 'r') as f:
+            self.subscriptions_config = json.load(f)
+    
+    def calculate_expected_status(
+        self,
+        action_type: str,
+        subscription_type: str,
+        subscription_state: Dict[str, Any] = None,
+        subscription_config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Calculate expected status code and related info based on action type
+        
+        Args:
+            action_type: Type of action (purchase, cancel, reactivate, advance_time)
+            subscription_type: Subscription type (1y_premium, 2y_premium, etc)
+            subscription_state: Current subscription state
+            subscription_config: Subscription configuration
+            
+        Returns:
+            Dict with expected_status_code, expected_status_name, check_trial_period, trial_duration_days
+        """
+        if subscription_config is None:
+            subscription_config = self.subscriptions_config.get(subscription_type, {})
+        
+        # CANCEL action
+        if action_type == 'cancel':
+            return {
+                'expected_status_code': 4,
+                'expected_status_name': 'cancelled',
+                'check_trial_period': False,
+                'trial_duration_days': None
+            }
+        
+        # ADVANCE_TIME action
+        if action_type == 'advance_time':
+            return self._calculate_status_after_time_advance(
+                subscription_state=subscription_state,
+                subscription_config=subscription_config
+            )
+        
+        # REACTIVATE or PURCHASE actions
+        # Both use the same logic: check trial eligibility
+        supports_trial = subscription_config.get('supports_trial', False)
+        
+        if supports_trial and self.trial_eligible:
+            # User IS trial eligible and plan supports trial
+            return {
+                'expected_status_code': subscription_config.get('expected_status_with_trial', 3),
+                'expected_status_name': subscription_config.get('expected_status_name_with_trial', 'trial'),
+                'check_trial_period': True,
+                'trial_duration_days': subscription_config.get('trial_period_days', 45)
+            }
+        else:
+            # User is NOT trial eligible OR plan doesn't support trial
+            return {
+                'expected_status_code': subscription_config.get('expected_status_without_trial', 1),
+                'expected_status_name': subscription_config.get('expected_status_name_without_trial', 'active'),
+                'check_trial_period': False,
+                'trial_duration_days': None
+            }
+    
+    def calculate_expected_dates(
+        self,
+        action_type: str,
+        subscription_state: Dict[str, Any],
+        actual_start_date: str,
+        actual_expire_date: str,
+        subscription_config: Dict[str, Any]
+    ) -> Tuple[str, str]:
+        """
+        Calculate expected start and expire dates
+        
+        IMPORTANT: This method uses calendar-based date arithmetic (not fixed day counts)
+        to properly handle leap years. Stripe uses calendar years, so we must match.
+
+        Args:
+            action_type: Type of action (purchase, cancel, reactivate, advance_time)
+            subscription_state: Current subscription state (contains ORIGINAL dates from purchase)
+            actual_start_date: Actual start date from API (may be RENEWED subscription)
+            actual_expire_date: Actual expire date from API (may be RENEWED subscription)
+            subscription_config: Subscription configuration
+            
+        Returns:
+            Tuple of (expected_start_date, expected_expire_date)
+        """
+        # For purchase/cancel/reactivate: expect actual dates
+        if action_type in ['purchase', 'cancel', 'reactivate']:
+            return (actual_start_date, actual_expire_date)
+        
+        # For advance_time: calculate based on cancellation state
+        if action_type == 'advance_time':
+            is_cancelled = subscription_state.get('is_cancelled', False) if subscription_state else False
+            days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+            duration_days = subscription_config.get('duration_days', 365) if subscription_config else 365
+            
+            self.logger.info(f"Calculating expected dates for advance_time:")
+            self.logger.info(f"  is_cancelled: {is_cancelled}")
+            self.logger.info(f"  days_advanced: {days_advanced}")
+            self.logger.info(f"  duration_days: {duration_days}")
+            
+            # If cancelled: dates stay unchanged
+            if is_cancelled:
+                self.logger.info("  → Subscription is CANCELLED - dates remain UNCHANGED")
+                return (actual_start_date, actual_expire_date)
+            
+            # If not cancelled: check if time passed expiration
+            # CRITICAL: Use ORIGINAL dates from subscription_state, NOT actual dates from API
+            # The API returns the RENEWED subscription's dates after auto-renewal
+            try:
+                # Get ORIGINAL dates from subscription_state (stored at purchase time)
+                original_start_str = subscription_state.get('start_date') if subscription_state else None
+                original_expire_str = subscription_state.get('expire_date') if subscription_state else None
+
+                if not original_start_str or not original_expire_str:
+                    self.logger.warning("  Missing original dates in subscription_state, using actual dates")
+                    start_date = datetime.fromisoformat(actual_start_date.replace('Z', '+00:00'))
+                    expire_date = datetime.fromisoformat(actual_expire_date.replace('Z', '+00:00'))
+                else:
+                    # Use ORIGINAL dates to calculate simulated time
+                    start_date = datetime.fromisoformat(original_start_str.replace('Z', '+00:00'))
+                    expire_date = datetime.fromisoformat(original_expire_str.replace('Z', '+00:00'))
+                    self.logger.info(f"  Using ORIGINAL dates from state: start={original_start_str}, expire={original_expire_str}")
+
+                # Calculate simulated current time from ORIGINAL start date
+                simulated_now = start_date + timedelta(days=days_advanced)
+                
+                self.logger.info(f"  Original Start: {start_date}")
+                self.logger.info(f"  Original Expire: {expire_date}")
+                self.logger.info(f"  Simulated now: {simulated_now}")
+
+                if simulated_now >= expire_date:
+                    # Past expiration - new subscription should start
+                    # New subscription starts at OLD expire date
+                    expected_start = expire_date
+                    
+                    # CRITICAL: Use calendar-based arithmetic to handle leap years
+                    # Stripe adds N calendar years, not N×365 days
+                    expected_expire = self._add_subscription_duration(
+                        start_date=expected_start,
+                        duration_days=duration_days
+                    )
+
+                    exp_start_str = expected_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    exp_expire_str = expected_expire.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    
+                    self.logger.info(f"  → Time past expiration - NEW subscription expected")
+                    self.logger.info(f"     Expected Start: {exp_start_str}")
+                    self.logger.info(f"     Expected Expire: {exp_expire_str}")
+                    self.logger.info(f"     (Using calendar math to handle leap years)")
+
+                    return (exp_start_str, exp_expire_str)
+                else:
+                    # Still within period - dates unchanged
+                    self.logger.info("  → Still within period - dates UNCHANGED")
+                    return (actual_start_date, actual_expire_date)
+                    
+            except Exception as e:
+                self.logger.warning(f"Error calculating dates: {e}")
+                return (actual_start_date, actual_expire_date)
+        
+        # Default: return actual dates
+        return (actual_start_date, actual_expire_date)
+    
+    def _add_subscription_duration(
+        self,
+        start_date: datetime,
+        duration_days: int
+    ) -> datetime:
+        """
+        Add subscription duration to start date using calendar-based arithmetic.
+
+        This properly handles leap years by using relativedelta instead of fixed day counts.
+        Stripe uses calendar years (e.g., "2 years from now"), not fixed day counts.
+
+        Args:
+            start_date: Starting date
+            duration_days: Duration in days (365, 730, etc.)
+
+        Returns:
+            Expire date calculated using calendar math
+        """
+        # Determine number of years from duration_days
+        # 365 days = 1 year, 730 days = 2 years, etc.
+        if duration_days == 365:
+            years = 1
+        elif duration_days == 730:
+            years = 2
+        elif duration_days % 365 == 0:
+            years = duration_days // 365
+        else:
+            # For non-standard durations (e.g., lifetime = 36500 days),
+            # fall back to day-based calculation
+            self.logger.info(f"  Non-standard duration {duration_days} days, using day-based calculation")
+            return start_date + timedelta(days=duration_days)
+
+        # Use relativedelta for proper calendar arithmetic (handles leap years)
+        expire_date = start_date + relativedelta(years=years)
+
+        self.logger.info(f"  Added {years} calendar year(s) to {start_date.date()} → {expire_date.date()}")
+
+        return expire_date
+
+    def get_expected_duration_days(
+        self,
+        subscription_type: str = None,
+        subscription_config: Dict[str, Any] = None
+    ) -> int:
+        """
+        Get expected duration in days for a subscription type
+
+        Args:
+            subscription_type: Subscription type (1y_premium, 2y_premium, lifetime, etc)
+            subscription_config: Subscription configuration (optional)
+
+        Returns:
+            Expected duration in days (0 for lifetime)
+        """
+        if subscription_config is None and subscription_type:
+            subscription_config = self.subscriptions_config.get(subscription_type, {})
+
+        if subscription_config:
+            return subscription_config.get('duration_days', 365)
+
+        return 365  # Default to 1 year
+    
+    def _calculate_status_after_time_advance(
+        self,
+        subscription_state: Dict[str, Any],
+        subscription_config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Calculate expected status after time advancement
+        
+        Args:
+            subscription_state: Current subscription state
+            subscription_config: Subscription configuration
+            
+        Returns:
+            Dict with expected_status_code, expected_status_name, check_trial_period, trial_duration_days
+        """
+        days_advanced = subscription_state.get('days_advanced', 0)
+        current_status = subscription_state.get('status_code')
+        is_cancelled = subscription_state.get('is_cancelled', False)
+        trial_period_days = subscription_state.get('trial_period_days')
+        
+        self.logger.info(f"Calculating expected status after {days_advanced} days advancement")
+        self.logger.info(f"  Current: status={current_status}, cancelled={is_cancelled}, trial_days={trial_period_days}")
+        
+        try:
+            if subscription_state.get('start_date') and subscription_state.get('expire_date'):
+                start_date = datetime.fromisoformat(subscription_state['start_date'].replace('Z', '+00:00'))
+                expire_date = datetime.fromisoformat(subscription_state['expire_date'].replace('Z', '+00:00'))
+                simulated_now = start_date + timedelta(days=days_advanced)
+                
+                if simulated_now >= expire_date:
+                    # Past expiration
+                    if is_cancelled:
+                        # Cancelled stays cancelled
+                        return {
+                            'expected_status_code': 4,
+                            'expected_status_name': 'cancelled',
+                            'check_trial_period': False,
+                            'trial_duration_days': None
+                        }
+                    else:
+                        # Trial expired → new active subscription
+                        if trial_period_days and current_status == 3:
+                            return {
+                                'expected_status_code': 1,
+                                'expected_status_name': 'active',
+                                'check_trial_period': False,
+                                'trial_duration_days': None
+                            }
+                        else:
+                            # Regular active subscription
+                            return {
+                                'expected_status_code': 1,
+                                'expected_status_name': 'active',
+                                'check_trial_period': False,
+                                'trial_duration_days': None
+                            }
+                else:
+                    # Not yet expired - status unchanged
+                    if is_cancelled:
+                        return {
+                            'expected_status_code': 4,
+                            'expected_status_name': 'cancelled',
+                            'check_trial_period': False,
+                            'trial_duration_days': None
+                        }
+                    elif trial_period_days and current_status == 3:
+                        return {
+                            'expected_status_code': 3,
+                            'expected_status_name': 'trial',
+                            'check_trial_period': True,
+                            'trial_duration_days': trial_period_days
+                        }
+                    else:
+                        return {
+                            'expected_status_code': 1,
+                            'expected_status_name': 'active',
+                            'check_trial_period': False,
+                            'trial_duration_days': None
+                        }
+        except Exception as e:
+            self.logger.error(f"Error calculating status: {e}")
+        
+        # Fallback
+        return {
+            'expected_status_code': current_status or 1,
+            'expected_status_name': 'active',
+            'check_trial_period': False,
+            'trial_duration_days': None
+        }

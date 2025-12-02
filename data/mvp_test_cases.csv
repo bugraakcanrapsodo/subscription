@@ -1,12 +1,17 @@
-test_id,test_name,country,trial_status,action_1,param_1,action_2,param_2,action_3,param_3
-MVP001,Purchase 1Y Premium - Trial Eligible - United States,us,Active,purchase_1y_premium,visa_success,,,,
-MVP002,Purchase 1Y Premium - No Trial - Canada,ca,None,purchase_1y_premium,visa_success,,,,
-MVP003,Purchase 1Y Premium - Trial Eligible - Australia,au,Active,purchase_1y_premium,mastercard_success,,,,
-MVP004,Purchase 2Y Premium - Trial Eligible - Japan,jp,Active,purchase_2y_premium,visa_success,,,,
-MVP005,Purchase 1Y Platinum - No Trial - United Kingdom,gb,None,purchase_1y_platinum,visa_success,,,,
-MVP006,Purchase 1Y Premium then Cancel - United States,us,Active,purchase_1y_premium,visa_success,cancel,,,
-MVP007,Purchase 1Y Premium then Cancel then Reactivate - United States,us,Active,purchase_1y_premium,visa_success,cancel,,reactivate
-MVP008,Purchase 1Y Premium then Cancel then Advance 46 days (Trial Expired) - United States,us,Active,purchase_1y_premium,visa_success,cancel,,advance_time,46
-MVP009,Purchase 1Y Premium then Advance 46 days (Trial to Active) - United States,us,Active,purchase_1y_premium,visa_success,advance_time,46,,
-,,,,,,,,,
-,,,,,,,,,
+test_id,test_name,country,trial_status,action_1,param_1,action_2,param_2,action_3,param_3,action_4,param_4
+MVP001,Purchase 1Y Premium - Trial Eligible - United States,us,Active,purchase_1y_premium,visa_success,,,,,,
+MVP002,Purchase 1Y Premium - No Trial - Canada,ca,None,purchase_1y_premium,visa_success,,,,,,
+MVP003,Purchase 1Y Premium - Trial Eligible - Australia,au,Active,purchase_1y_premium,mastercard_success,,,,,,
+MVP004,Purchase 2Y Premium - Trial Eligible - Japan,jp,Active,purchase_2y_premium,visa_success,,,,,,
+MVP005,Purchase 1Y Platinum - No Trial - United Kingdom,gb,None,purchase_1y_platinum,visa_success,,,,,,
+MVP006,Purchase 1Y Premium then Cancel - United States,us,Active,purchase_1y_premium,visa_success,cancel,,,,,
+MVP007,Purchase 1Y Premium then Cancel then Reactivate - United States,us,Active,purchase_1y_premium,visa_success,cancel,,reactivate,,,
+MVP008,Purchase 1Y Premium then Cancel then Advance 46 days (Trial Expired) - United States,us,Active,purchase_1y_premium,visa_success,cancel,,advance_time,46,,
+MVP009,Purchase 1Y Premium then Advance 46 days (Trial to Active) - United States,us,Active,purchase_1y_premium,visa_success,advance_time,46,,,,
+MVP010,Purchase 1Y Premium then Cancel then Reactivate then Advance 46 days (Trial Expired) - United States,us,Active,purchase_1y_premium,visa_success,cancel,,reactivate,,advance_time,46
+MVP011,Purchase 1Y Premium then Advance 366 days (Auto-renew) - United States,us,None,purchase_2y_premium,visa_success,advance_time,701,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
