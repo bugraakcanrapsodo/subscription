@@ -2,11 +2,19 @@ import logging
 import os
 from datetime import datetime
 from io import BytesIO
-from reportportal_client import RPLogger, RPLogHandler
 import requests
 import configparser
 import os.path
 import json
+
+# Optional ReportPortal integration
+try:
+    from reportportal_client import RPLogger, RPLogHandler
+    HAS_REPORT_PORTAL = True
+except ImportError:
+    RPLogger = None
+    RPLogHandler = None
+    HAS_REPORT_PORTAL = False
 
 class Logger:
     _instance = None
@@ -93,8 +101,8 @@ class Logger:
             self.logger.addHandler(file_handler)
             self.logger.addHandler(console_handler)
 
-            # Add ReportPortal handler
-            if not any(isinstance(h, RPLogHandler) for h in self.logger.handlers):
+            # Add ReportPortal handler (if available)
+            if HAS_REPORT_PORTAL and RPLogHandler and not any(isinstance(h, RPLogHandler) for h in self.logger.handlers):
                 try:
                     rp_handler = RPLogHandler()
                     rp_handler.setLevel(logging.DEBUG)  # We need to capture all logs for ReportPortal
@@ -103,6 +111,8 @@ class Logger:
                 except Exception as e:
                     self.logger.warning(f"Failed to initialize ReportPortal handler: {str(e)}")
                     Logger._rp_handler = None
+            else:
+                Logger._rp_handler = None
 
             Logger._initialized = True
 

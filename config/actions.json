@@ -1,0 +1,112 @@
+{
+  "purchase_1y_premium": {
+    "action_id": "purchase_1y_premium",
+    "action_name": "Purchase 1-Year Premium Membership",
+    "action_type": "purchase",
+    "description": "Purchase 1-year premium subscription. Trial eligibility depends on device serial (set via trial_status column in Excel)",
+    "parameters": {
+      "card_type": {
+        "description": "Test card to use (visa_success, card_declined, etc.)",
+        "required": true,
+        "default": "visa_success",
+        "reference": "See config/test_cards.json for all available cards"
+      }
+    },
+    "subscription_type": "1y_premium",
+    "requires_ui": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "check_trial_period": "auto",
+      "expected_plan_code": 1
+    }
+  },
+  "purchase_2y_premium": {
+    "action_id": "purchase_2y_premium",
+    "action_name": "Purchase 2-Year Premium Membership",
+    "action_type": "purchase",
+    "description": "Purchase 2-year premium subscription. Trial eligibility depends on device serial (45-day trial if eligible)",
+    "parameters": {
+      "card_type": {
+        "description": "Test card to use (visa_success, card_declined, etc.)",
+        "required": true,
+        "default": "visa_success",
+        "reference": "See config/test_cards.json for all available cards"
+      }
+    },
+    "subscription_type": "2y_premium",
+    "requires_ui": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "check_trial_period": "auto",
+      "expected_plan_code": 9
+    }
+  },
+  "purchase_1y_platinum": {
+    "action_id": "purchase_1y_platinum",
+    "action_name": "Purchase 1-Year Platinum Membership",
+    "action_type": "purchase",
+    "description": "Purchase 1-year platinum subscription. Trial eligibility depends on device serial (30-day trial if eligible)",
+    "parameters": {
+      "card_type": {
+        "description": "Test card to use (visa_success, card_declined, etc.)",
+        "required": true,
+        "default": "visa_success",
+        "reference": "See config/test_cards.json for all available cards"
+      }
+    },
+    "subscription_type": "1y_platinum",
+    "requires_ui": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "check_trial_period": "auto",
+      "expected_plan_code": 12
+    }
+  },
+  "cancel": {
+    "action_id": "cancel",
+    "action_name": "Cancel Subscription",
+    "action_type": "cancel",
+    "description": "Cancel the user's active subscription. Can be performed if user has an active subscription or in trial. This will set the subscription to cancel at the end of the current billing period.",
+    "parameters": {},
+    "requires_ui": false,
+    "verification": {
+      "check_subscription_status": true,
+      "check_cancel_at_period_end": true
+    }
+  },
+  "reactivate": {
+    "action_id": "reactivate",
+    "action_name": "Reactivate Subscription",
+    "action_type": "reactivate",
+    "description": "Reactivate a previously cancelled subscription. This will restore the subscription to continue billing at the end of the current period.",
+    "parameters": {},
+    "requires_ui": false,
+    "verification": {
+      "check_subscription_status": true,
+      "check_cancel_at_period_end": false
+    }
+  },
+  "advance_time": {
+    "action_id": "advance_time",
+    "action_name": "Advance Time (Manual)",
+    "action_type": "advance_time",
+    "description": "Manually advance time in Stripe Dashboard. Framework pauses and waits for tester to advance time, then calculates expected subscription status based on days advanced.",
+    "parameters": {
+      "days": {
+        "description": "Number of days to advance (e.g., 46 for trial expiration, 366 for 1-year renewal)",
+        "required": true,
+        "type": "integer"
+      }
+    },
+    "requires_ui": false,
+    "is_manual": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "calculate_status_from_time_advance": true
+    }
+  }
+}

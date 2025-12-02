@@ -29,11 +29,15 @@ class BasePage {
   /**
    * Navigate to a URL
    * @param {string} url - URL to navigate to
+   * @param {number} timeout - Navigation timeout in milliseconds (default: 60000)
    * @returns {Promise<void>}
    */
-  async goto(url) {
+  async goto(url, timeout = 60000) {
     Logger.info(`Navigating to: ${url}`);
-    await this.page.goto(url);
+    await this.page.goto(url, { 
+      timeout: timeout,
+      waitUntil: 'load'
+    });
   }
 
   /**
@@ -64,6 +68,22 @@ class BasePage {
   }
 
   /**
+   * Get text content from an element, or null if element not found
+   * Useful for optional elements that may not exist on all page types
+   * @param {string} locator - Element locator
+   * @param {number} timeout - Timeout in milliseconds (default: 2000)
+   * @returns {Promise<string|null>}
+   */
+  async getTextOrNull(locator, timeout = 2000) {
+    try {
+      await this.page.waitForSelector(locator, { timeout });
+      return await this.getText(locator);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Wait for a specific amount of time
    * @param {number} milliseconds - Time to wait in milliseconds
    * @returns {Promise<void>}
@@ -86,12 +106,22 @@ class BasePage {
   }
 
   /**
-   * Click on an element
+   * Click on an element with fallback to JavaScript click
+   * Tries standard Playwright click first, falls back to JS click if visibility checks fail
    * @param {string} locator - Element locator
    * @returns {Promise<void>}
    */
   async click(locator) {
-    await this.page.locator(locator).click();
+    try {
+      // Try standard Playwright click (with actionability checks)
+      await this.page.locator(locator).click({ timeout: 2000 });
+      Logger.debug(`Clicked element: ${locator}`);
+    } catch (error) {
+      // If standard click fails (visibility/actionability issues), use JavaScript click
+      Logger.warn(`Standard click failed for ${locator}, using JavaScript click fallback`);
+      await this.page.locator(locator).evaluate(el => el.click());
+      Logger.debug(`JavaScript click successful: ${locator}`);
+    }
   }
 
   /**
@@ -140,10 +170,72 @@ class BasePage {
   /**
    * Check if an element is visible
    * @param {string} locator - Element locator
+   * @param {number} timeout - Timeout in milliseconds (default: 5000)
    * @returns {Promise<boolean>}
    */
-  async isVisible(locator) {
-    return await this.page.locator(locator).isVisible();
+  async isVisible(locator, timeout = 5000) {
+    try {
+      await this.page.waitForSelector(locator, { state: 'visible', timeout });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Wait for any of the given locators to become visible and return the first one found
+   * 
+   * This method is useful when dealing with different possible UI paths where multiple
+   * elements might appear in a given situation. It continuously checks for the presence
+   * of any of the provided locators until one is found or the timeout is reached.
+   * 
+   * @param {Array<string>} locators - Array of CSS selectors to check
+   * @param {number} timeout - Maximum time to wait in milliseconds (default: 10000)
+   * @returns {Promise<string>} - The first locator that was found to be visible
+   * @throws {Error} - If none of the elements appear within the timeout period
+   * 
+   * @example
+   * // Wait for either old or new card accordion button
+   * const cardButton = await page.waitForAnyElement([
+   *   '[data-testid="card-accordion-item-button"]',
+   *   '#payment-method-accordion-item-title-card'
+   * ]);
+   * await page.click(cardButton);
+   */
+  async waitForAnyElement(locators, timeout = 10000) {
+    Logger.info(`Waiting for any of ${locators.length} element(s) to become visible (timeout: ${timeout}ms)`);
+    Logger.debug(`Locators: ${locators.join(', ')}`);
+    
+    const endTime = Date.now() + timeout;
+    const checkInterval = 500; // Check every 500ms
+    
+    while (Date.now() < endTime) {
+      // Check each locator in sequence
+      for (const locator of locators) {
+        try {
+          // Quick check with short timeout
+          const isVisible = await this.page.locator(locator).isVisible({ timeout: checkInterval });
+          if (isVisible) {
+            Logger.info(`✓ Found visible element: ${locator}`);
+            return locator;
+          }
+        } catch (error) {
+          // Element not visible yet, continue to next locator
+          continue;
+        }
+      }
+      
+      // Small sleep to prevent excessive CPU usage
+      await this.page.waitForTimeout(checkInterval);
+    }
+    
+    // If we get here, no element was found within the timeout
+    const currentUrl = this.page.url();
+    const errorMessage = `None of the expected elements appeared within ${timeout}ms.\n` +
+                        `Looked for: ${locators.join(', ')}\n` +
+                        `Current URL: ${currentUrl}`;
+    Logger.error(errorMessage);
+    throw new Error(errorMessage);
   }
 
   /**
@@ -178,7 +270,20 @@ class BasePage {
     }
   }
 
-
+  /**
+   * Get selector with dynamic value(s) filled in
+   * @param {string} selectorTemplate - Selector template with {} placeholders
+   * @param {...string} values - Values to fill in the template
+   * @returns {string} Formatted selector
+   */
+  getOptionSelector(selectorTemplate, ...values) {
+    let selector = selectorTemplate;
+    values.forEach(value => {
+      selector = selector.replace('{}', value);
+    });
+    Logger.debug(`Formatted selector: ${selector}`);
+    return selector;
+  }
 
 }
 

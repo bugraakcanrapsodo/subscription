@@ -8,6 +8,8 @@ This framework provides the structure and reusable components for testing Stripe
 
 - **Reused from PRO 2.0**: Logger, Xray integration, Step tracker, fixture patterns
 - **Reused from cloudApi**: Docker Playwright service, browser recording, scripts
+- **API Framework**: Backend API clients for actions & verifications
+- **Hybrid Testing**: Both UI automation (Playwright) and API testing capabilities
 - **Clean Structure**: Organized folders ready for Stripe-specific implementation
 
 ## 📁 Project Structure
@@ -20,10 +22,14 @@ subscription_poc/
 │   ├── step_tracker.py          # As-is
 │   └── __init__.py              # Basic imports
 │
-├── models/                        📝 TODO: Pydantic models
-│   └── __init__.py              # Placeholder
+├── api/                           ✅ API Clients (NEW)
+│   ├── __init__.py              # Module exports
+│   ├── config.py                # Environment & endpoints
+│   ├── base_client.py           # Base HTTP client
+│   ├── auth_api.py              # Authentication API
+│   └── README.md                # API documentation
 │
-├── services/                      📝 TODO: Service layer
+├── models/                        📝 TODO: Pydantic models
 │   └── __init__.py              # Placeholder
 │
 ├── utils/                         📝 TODO: Utilities
@@ -49,8 +55,9 @@ subscription_poc/
 │   ├── output/                  # Artifacts directory
 │   └── package.json             # As-is from cloudApi
 │
-├── tests/                         📝 TODO: Test cases
-│   └── test_example.py          # Structure example
+├── tests/                         ✅ Test cases
+│   ├── test_example.py          # Playwright service test
+│   └── test_auth_api.py         # Authentication API tests
 │
 ├── data/                          📝 TODO: Test data
 ├── conftest.py                    ✅ REUSED patterns from PRO 2.0
@@ -92,4 +99,34 @@ curl http://localhost:3001/api/health
 
 ### 3. Configure Environment
 
-Create a `.env` file with required environment variables for Stripe keys, Xray integration, and ReportPortal (if needed).
+Create a `.env` file with required environment variables:
+
+```bash
+# API Configuration
+TEST_ENV=test
+API_TEST_URL=https://test.mlm.rapsodo.com
+API_TIMEOUT=30
+
+# Stripe Configuration (Required for time advancement tests)
+STRIPE_TEST_API_KEY=sk_test_your_stripe_test_api_key_here
+
+# ReportPortal (optional)
+# RP_ENDPOINT=http://...
+# RP_PROJECT=...
+```
+
+### 4. Run Tests
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run API tests
+pytest tests/test_auth_api.py -v -s
+
+# Run Playwright service test
+pytest tests/test_example.py -v -s
+
+# Run with markers
+pytest -m "smoke and api" -v -s
+```

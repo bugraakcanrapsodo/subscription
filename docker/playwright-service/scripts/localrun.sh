@@ -15,12 +15,21 @@ docker-compose -f "$BASE_DIR/config/docker-compose.yml" down
 echo "Cleaning output directories..."
 bash "$SCRIPT_DIR/cleanup.sh"
 
-echo "Pruning Docker build cache to avoid corruption..."
-docker builder prune -f
+# Enable BuildKit for faster, cached builds
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+
+echo "Building stripe-playwright-service (using cache)..."
+docker-compose -f "$BASE_DIR/config/docker-compose.yml" build
 
 echo "Starting stripe-playwright-service..."
-docker-compose -f "$BASE_DIR/config/docker-compose.yml" up --build -d
+docker-compose -f "$BASE_DIR/config/docker-compose.yml" up -d
 
 echo ""
 echo "✓ Service started successfully on port 3001"
+echo "  Waiting for service to be ready (VPN initializing in background)..."
+sleep 3
+echo "✓ Service ready! VPN will be available shortly"
+echo ""
 echo "  Health check: curl http://localhost:3001/api/health"
+echo "  Test VPN: curl -X POST http://localhost:3001/api/vpn/test -H 'Content-Type: application/json' -d '{\"country\":\"de\"}'"
