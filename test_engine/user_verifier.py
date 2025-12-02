@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from base.logger import Logger
 from api.mlm_api import MlmAPI
+from test_engine.subscription_expectations import SubscriptionExpectations
+
 
 
 class UserVerifier:
@@ -38,6 +40,10 @@ class UserVerifier:
         subscriptions_path = Path(__file__).parent.parent / 'config' / 'subscriptions.json'
         with open(subscriptions_path, 'r') as f:
             self.subscriptions_config = json.load(f)
+
+        self.expectations = SubscriptionExpectations(trial_eligible=trial_eligible)
+
+
     
     def verify_from_user_api(
         self, 
@@ -107,69 +113,23 @@ class UserVerifier:
             subscription_type = self.actions_config[action_name].get('subscription_type')
             subscription_config = self.subscriptions_config.get(subscription_type, {})
         
-        # Special handling for cancel, reactivate, and advance_time actions
-        if action_type == 'cancel':
-            # After cancel, status should be 4 (cancelled)
-            expected_status_code = 4
-            expected_status_name = 'cancelled'
-            check_trial_period = False
-            trial_duration_days = None
-            self.logger.info(f"Cancel action detected, expecting status: {expected_status_code} ({expected_status_name})")
-        elif action_type == 'advance_time':
-            # Calculate expected status after time advancement
-            result = self._calculate_status_after_time_advance(
-                subscription_state=subscription_state,
-                action_result=action_result,
-                subscription_config=subscription_config
-            )
-            expected_status_code = result['expected_status_code']
-            expected_status_name = result['expected_status_name']
-            check_trial_period = result['check_trial_period']
-            trial_duration_days = result['trial_duration_days']
-            self.logger.info(f"Advance time detected, expecting status: {expected_status_code} ({expected_status_name})")
-        elif action_type == 'reactivate':
-            # After reactivate, subscription should return to its original state
-            # Use the same logic as purchase: check trial eligibility and subscription support
-            supports_trial = subscription_config.get('supports_trial', False)
-            
-            if supports_trial and self.trial_eligible:
-                # User IS trial eligible and plan supports trial - should be in trial
-                expected_status_code = 3
-                expected_status_name = 'trial'
-                check_trial_period = True
-                trial_duration_days = subscription_config.get('trial_period_days', 45)
-            else:
-                # User is NOT trial eligible OR plan doesn't support trial - should be active
-                expected_status_code = 1
-                expected_status_name = 'active'
-                check_trial_period = False
-                trial_duration_days = None
-            
-            self.logger.info(f"Trial eligible: {self.trial_eligible}, Supports trial: {supports_trial}")
-            self.logger.info(f"Reactivate action detected, expecting status: {expected_status_code} ({expected_status_name})")
-        else:
-            # Regular purchase actions - determine based on trial eligibility
-            supports_trial = subscription_config.get('supports_trial', False)
-            
-            if supports_trial and self.trial_eligible:
-                # User IS trial eligible and plan supports trial
-                expected_status_code = subscription_config.get('expected_status_with_trial', 3)
-                expected_status_name = subscription_config.get('expected_status_name_with_trial', 'trial')
-                check_trial_period = True
-                trial_duration_days = subscription_config.get('trial_period_days', 45)
-            else:
-                # User is NOT trial eligible OR plan doesn't support trial
-                expected_status_code = subscription_config.get('expected_status_without_trial', 1)
-                expected_status_name = subscription_config.get('expected_status_name_without_trial', 'active')
-                check_trial_period = False
-                trial_duration_days = None
-            
-            self.logger.info(f"Trial eligible: {self.trial_eligible}, Supports trial: {supports_trial}")
-            self.logger.info(f"Expected status: {expected_status_code} ({expected_status_name})")
-        
+        # Calculate expected status and other information for cancel, reactivate, and advance_time actions
+        status_result = self.expectations.calculate_expected_status(
+            action_type=action_type,
+            subscription_type=subscription_type,
+            subscription_state=subscription_state,
+            subscription_config=subscription_config
+        )
         # Get expected plan code from subscription config (not from verification config)
         expected_plan_code = subscription_config.get('code') if subscription_config else None
-        
+        expected_status_code = status_result['expected_status_code']
+        expected_status_name = status_result['expected_status_name']
+        check_trial_period = status_result['check_trial_period']
+        trial_duration_days = status_result['trial_duration_days']
+
+
+
+
         # Verify subscription status
         return self._verify_subscription_status(
             expected_status_code=expected_status_code,
@@ -181,7 +141,8 @@ class UserVerifier:
             subscription_config=subscription_config,
             action_type=action_type,
             state_days_advanced=state_days_advanced,
-            state_prev_expire_date=state_prev_expire_date
+            state_prev_expire_date=state_prev_expire_date,
+            subscription_state=subscription_state
         )
     
     def _verify_subscription_status(
@@ -195,7 +156,8 @@ class UserVerifier:
         subscription_config: Dict[str, Any] = None,
         action_type: str = None,
         state_days_advanced: int = 0,
-        state_prev_expire_date: str = None
+        state_prev_expire_date: str = None,
+        subscription_state: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         Verify subscription status via MLM API
@@ -315,20 +277,9 @@ class UserVerifier:
                     # Check start date validity
                     # Skip "within last hour" check if time has been advanced OR if current action is advance_time
                     if action_type == 'advance_time' or state_days_advanced > 0:
-                        # Time advancement scenario - start date should match previous subscription's expire date
-                        # (when trial expires, new active subscription starts at trial's end date)
-                        if state_prev_expire_date and state_days_advanced > 0:
-                            expected_start = datetime.fromisoformat(state_prev_expire_date.replace('Z', '+00:00'))
-                            time_diff = abs((start_date - expected_start).total_seconds())
-                            if time_diff > 60:  # Allow 1 minute tolerance
-                                verification_issues.append(
-                                    f"Start date mismatch after time advance: {latest_sub.startDate} "
-                                    f"(expected: {state_prev_expire_date}, difference: {time_diff/60:.1f} minutes)"
-                                )
-                            else:
-                                self.logger.info(f"  ✓ Start date matches previous expire date")
-                        else:
-                            self.logger.info(f"  Skipping start date check (time has been advanced or is being advanced)")
+                        # Date verification happens after _calculate_expected_dates() is called
+                        # This ensures cancellation state is properly considered
+                        self.logger.info(f"  Date verification deferred to after expected dates calculation")
                     else:
                         # For initial purchase: check that start date is recent (within last hour)
                         time_since_start = (now - start_date).total_seconds()
@@ -350,17 +301,6 @@ class UserVerifier:
                             )
                         else:
                             self.logger.info(f"✓ Trial period duration verified: ~{trial_duration_days} days from dates")
-                    else:
-                        # Check subscription duration (should be ~365 days for 1-year)
-                        duration_days = (expire_date - start_date).days
-                        self.logger.info(f"Subscription duration: {duration_days} days")
-                        
-                        # For 1-year subscriptions, expect ~365 days (allow 1 day tolerance)
-                        if abs(duration_days - 365) > 1:
-                            verification_issues.append(
-                                f"Subscription duration seems incorrect: {duration_days} days "
-                                f"(expected ~365 for 1-year subscription)"
-                            )
                         
                 except Exception as date_error:
                     verification_issues.append(f"Date parsing error: {str(date_error)}")
@@ -368,21 +308,55 @@ class UserVerifier:
             # Get expected duration from subscription config
             expected_duration_days = subscription_config.get('duration_days') if subscription_config else None
             
-            # Calculate expected dates for time advancement scenarios
-            expected_start_date = None
-            expected_expire_date = None
+            # Calculate expected dates based on action type and cancellation state
+            # This properly handles:
+            # - purchase/cancel/reactivate: expect actual dates
+            # - advance_time + cancelled: expect unchanged dates (won't renew)
+            # - advance_time + not cancelled: calculate new dates if past expiration
+            expected_start_date, expected_expire_date = self.expectations.calculate_expected_dates(
+                action_type=action_type,
+                subscription_state=subscription_state,
+                actual_start_date=latest_sub.startDate,
+                actual_expire_date=latest_sub.expireDate,
+                subscription_config=subscription_config
+            )
             
-            if action_type == 'advance_time' or state_days_advanced > 0:
-                # For time advancement: calculate expected dates
-                expected_start_date = state_prev_expire_date if state_prev_expire_date else None
-                if expected_start_date and expected_duration_days:
-                    try:
-                        exp_start = datetime.fromisoformat(expected_start_date.replace('Z', '+00:00'))
-                        exp_expire = exp_start + timedelta(days=expected_duration_days)
-                        expected_expire_date = exp_expire.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                    except Exception as e:
-                        self.logger.warning(f"Could not calculate expected dates: {e}")
-            
+            self.logger.info(f"Expected dates calculated:")
+            self.logger.info(f"  Expected Start: {expected_start_date}")
+            self.logger.info(f"  Expected Expire: {expected_expire_date}")
+
+            # Verify the calculated expected dates against actual dates
+            if expected_start_date and expected_expire_date and (action_type == 'advance_time' or state_days_advanced > 0):
+                try:
+                    actual_start = datetime.fromisoformat(latest_sub.startDate.replace('Z', '+00:00'))
+                    actual_expire = datetime.fromisoformat(latest_sub.expireDate.replace('Z', '+00:00'))
+                    expected_start = datetime.fromisoformat(expected_start_date.replace('Z', '+00:00'))
+                    expected_expire = datetime.fromisoformat(expected_expire_date.replace('Z', '+00:00'))
+
+                    # Compare start dates (allow 1 minute tolerance)
+                    start_diff_seconds = abs((actual_start - expected_start).total_seconds())
+                    if start_diff_seconds > 60:
+                        verification_issues.append(
+                            f"Start date mismatch: {latest_sub.startDate} "
+                            f"(expected: {expected_start_date}, difference: {start_diff_seconds/60:.1f} minutes)"
+                        )
+                    else:
+                        self.logger.info(f"  ✓ Start date verified: matches expected")
+
+                    # Compare expire dates (allow 1 minute tolerance)
+                    expire_diff_seconds = abs((actual_expire - expected_expire).total_seconds())
+                    if expire_diff_seconds > 60:
+                        verification_issues.append(
+                            f"Expire date mismatch: {latest_sub.expireDate} "
+                            f"(expected: {expected_expire_date}, difference: {expire_diff_seconds/60:.1f} minutes)"
+                        )
+                    else:
+                        self.logger.info(f"  ✓ Expire date verified: matches expected")
+
+                except Exception as e:
+                    self.logger.warning(f"Could not verify expected dates: {e}")
+
+
             if verification_issues:
                 return {
                     'verified': False,
@@ -435,138 +409,7 @@ class UserVerifier:
                 'error': str(e)
             }
     
-    def _calculate_status_after_time_advance(
-        self,
-        subscription_state: Dict[str, Any],
-        action_result: Dict[str, Any],
-        subscription_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Calculate expected subscription status after time advancement
-        
-        IMPORTANT: This framework uses Stripe's TEST CLOCK advancement, NOT real time.
-        The backend database does NOT know about simulated time, only Stripe does.
-        Therefore, backend status reflects REAL time, not simulated time.
-        
-        Logic:
-        - If in trial (status=3) and NOT cancelled:
-            - After trial period → active (status=1) in Stripe
-            - Backend creates new subscription after trial
-        - If in trial (status=3) and cancelled (status=4):
-            - After trial period → status REMAINS cancelled (4)
-            - Backend doesn't know time advanced, so it won't change to expired (2)
-        - If active (status=1) and NOT cancelled:
-            - After subscription period → status REMAINS active (1)
-            - Backend doesn't advance time, so won't trigger expiration/renewal
-        - If active (status=1) and cancelled (status=4):
-            - After current period → status REMAINS cancelled (4)
-            - Backend doesn't know time advanced, so it won't change to expired (2)
-        
-        Args:
-            subscription_state: Current subscription state
-            action_result: Result from advance_time action
-            subscription_config: Subscription configuration
-            
-        Returns:
-            Dict with expected_status_code, expected_status_name, check_trial_period, trial_duration_days
-        """
-        days_advanced = action_result.get('days_advanced', 0)
-        # Note: total_days_advanced will be updated AFTER this verification
-        # So we use the PREVIOUS total + current advancement
-        previous_days_advanced = subscription_state.get('days_advanced', 0)
-        total_days_advanced = previous_days_advanced + days_advanced
-        
-        # Get current state
-        current_status = subscription_state.get('status_code')
-        is_cancelled = subscription_state.get('is_cancelled', False)
-        trial_period_days = subscription_state.get('trial_period_days')
-        
-        self.logger.info(f"Calculating expected status after advancing {days_advanced} days")
-        self.logger.info(f"Previous days advanced: {previous_days_advanced}, Total: {total_days_advanced}")
-        self.logger.info(f"Current state: status={current_status}, cancelled={is_cancelled}, trial_days={trial_period_days}")
-        
-        # Parse dates to calculate time-based status
-        try:
-            if subscription_state.get('start_date') and subscription_state.get('expire_date'):
-                from datetime import datetime
-                # Use the ORIGINAL start date (from first subscription)
-                start_date = datetime.fromisoformat(subscription_state['start_date'].replace('Z', '+00:00'))
-                expire_date = datetime.fromisoformat(subscription_state['expire_date'].replace('Z', '+00:00'))
-                
-                # Calculate simulated current time based on total days advanced
-                simulated_now = start_date + timedelta(days=total_days_advanced)
-                
-                self.logger.info(f"Start date: {start_date}")
-                self.logger.info(f"Expire date: {expire_date}")
-                self.logger.info(f"Simulated now (after {total_days_advanced} days): {simulated_now}")
-                
-                # Check if we've passed the expire date (in simulated time)
-                if simulated_now >= expire_date:
-                    # Past expiration (in simulated Stripe time)
-                    if is_cancelled:
-                        # IMPORTANT: Backend doesn't know about simulated time!
-                        # Cancelled subscription stays CANCELLED (not expired)
-                        # because backend's real time hasn't reached expire date
-                        expected_status_code = 4
-                        expected_status_name = 'cancelled'
-                        check_trial_period = False
-                        trial_duration_days = None
-                        self.logger.info(f"→ Cancelled subscription past expire date in Stripe time, but backend status remains CANCELLED (backend uses real time)")
-                    else:
-                        # Non-cancelled subscription - should auto-renew or expire IN STRIPE
-                        # For trial subscriptions that expire, they convert to active (if not cancelled)
-                        if trial_period_days and current_status == 3:
-                            # Trial expired → Stripe creates NEW active subscription
-                            # Backend DOES see this because Stripe webhook notifies it
-                            expected_status_code = 1
-                            expected_status_name = 'active'
-                            check_trial_period = False
-                            trial_duration_days = None
-                            self.logger.info(f"→ Trial period expired in Stripe, new active subscription created (webhook notifies backend)")
-                        else:
-                            # Regular subscription - backend doesn't advance time
-                            # So status stays as-is (active or whatever it was)
-                            expected_status_code = 1
-                            expected_status_name = 'active'
-                            check_trial_period = False
-                            trial_duration_days = None
-                            self.logger.info(f"→ Past subscription period in Stripe time, but backend status remains ACTIVE (backend uses real time)")
-                else:
-                    # Not yet expired - status should remain the same
-                    if is_cancelled:
-                        expected_status_code = 4
-                        expected_status_name = 'cancelled'
-                    elif trial_period_days and current_status == 3:
-                        expected_status_code = 3
-                        expected_status_name = 'trial'
-                    else:
-                        expected_status_code = 1
-                        expected_status_name = 'active'
-                    check_trial_period = bool(trial_period_days and current_status == 3)
-                    trial_duration_days = trial_period_days if check_trial_period else None
-                    self.logger.info(f"→ Still within subscription period, status remains {expected_status_name}")
-            else:
-                # Can't parse dates, fall back to current status
-                self.logger.warning("Could not parse dates for time advancement calculation")
-                expected_status_code = current_status or 1
-                expected_status_name = 'active'
-                check_trial_period = False
-                trial_duration_days = None
-        
-        except Exception as e:
-            self.logger.error(f"Error calculating status after time advance: {e}")
-            expected_status_code = 1
-            expected_status_name = 'active'
-            check_trial_period = False
-            trial_duration_days = None
-        
-        return {
-            'expected_status_code': expected_status_code,
-            'expected_status_name': expected_status_name,
-            'check_trial_period': check_trial_period,
-            'trial_duration_days': trial_duration_days
-        }
-    
+
     def _select_subscription_at_simulated_time(
         self,
         subscriptions_response: Any,
