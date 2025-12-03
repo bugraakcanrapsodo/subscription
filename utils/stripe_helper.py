@@ -538,3 +538,167 @@ class StripeTestHelper:
             self.logger.error(f"Error deleting test clock: {str(e)}")
             raise
 
+    def refund_subscription_payment(
+        self,
+        email: str,
+        amount_cents: Optional[int] = None,
+        reason: str = "requested_by_customer"
+    ) -> dict:
+        """
+        Refund the latest payment for a customer's subscription.
+
+        This method:
+        1. Finds the Stripe customer by email
+        2. Gets the customer's active subscription
+        3. Retrieves the latest invoice's payment intent
+        4. Creates a refund via Stripe API
+
+        Args:
+            email: Customer email address
+            amount_cents: Amount to refund in cents (None = full refund)
+                        Example: 5000 = $50.00
+            reason: Refund reason - must be one of:
+                    - 'duplicate'
+                    - 'fraudulent'
+                    - 'requested_by_customer' (default)
+
+        Returns:
+            dict with:
+            - success: bool
+            - message: str
+            - refund_id: str (if successful)
+            - refund_amount: int (amount in cents)
+            - refund_status: str ('succeeded', 'pending', etc.)
+            - customer_id: str
+            - subscription_id: str
+            - payment_intent_id: str
+            - invoice_id: str
+
+        Raises:
+            ValueError: If customer not found, no subscription, or invalid reason
+            stripe.error.InvalidRequestError: If refund fails (e.g., already refunded)
+
+        Example:
+            >>> helper = StripeTestHelper()
+            >>>
+            >>> # Full refund
+            >>> result = helper.refund_subscription_payment("test@example.com")
+            >>>
+            >>> # Partial refund of $25.00
+            >>> result = helper.refund_subscription_payment("test@example.com", amount_cents=2500)
+            >>>
+            >>> # Full refund with reason
+            >>> result = helper.refund_subscription_payment("test@example.com", reason="duplicate")
+        """
+        # Validate reason
+        valid_reasons = ['duplicate', 'fraudulent', 'requested_by_customer']
+        if reason not in valid_reasons:
+            raise ValueError(f"Invalid refund reason: {reason}. Must be one of: {valid_reasons}")
+
+        try:
+            self.logger.info(f"Starting refund process for customer: {email}")
+
+            # Step 1: Find customer
+            customer = self.get_customer_by_email(email)
+            if not customer:
+                raise ValueError(f"Customer not found with email: {email}")
+
+            self.logger.info(f"Found customer: {customer.id}")
+
+            # Step 2: Get customer's subscriptions
+            subscriptions = self.get_customer_subscriptions(customer.id)
+
+            if not subscriptions:
+                raise ValueError(f"No subscriptions found for customer: {customer.id}")
+
+            # Find active or trialing subscription (or most recent if none active)
+            active_sub = None
+            for sub in subscriptions:
+                if sub.status in ['active', 'trialing', 'canceled']:
+                    active_sub = sub
+                    break
+
+            if not active_sub:
+                # Use the most recent subscription
+                active_sub = subscriptions[0]
+
+            self.logger.info(f"Found subscription: {active_sub.id} (status: {active_sub.status})")
+
+            # Step 3: Get the latest invoice
+            if not active_sub.latest_invoice:
+                raise ValueError(f"No invoice found for subscription: {active_sub.id}")
+
+            # Retrieve full invoice object
+            invoice = stripe.Invoice.retrieve(active_sub.latest_invoice)
+            self.logger.info(f"Found invoice: {invoice.id} (status: {invoice.status})")
+
+            # Step 4: Get the payment intent from the invoice
+            if not invoice.payment_intent:
+                raise ValueError(
+                    f"No payment intent found for invoice: {invoice.id}. "
+                    "This may happen for trials that haven't been charged yet."
+                )
+
+            payment_intent_id = invoice.payment_intent
+            self.logger.info(f"Found payment intent: {payment_intent_id}")
+
+            # Step 5: Create the refund
+            refund_params = {
+                'payment_intent': payment_intent_id,
+                'reason': reason
+            }
+
+            if amount_cents is not None:
+                if amount_cents <= 0:
+                    raise ValueError(f"Refund amount must be positive, got: {amount_cents}")
+                refund_params['amount'] = amount_cents
+                self.logger.info(f"Creating partial refund: {amount_cents} cents")
+            else:
+                self.logger.info("Creating full refund")
+
+            # Create the refund via Stripe API
+            refund = stripe.Refund.create(**refund_params)
+
+            self.logger.info(f"✓ Refund created successfully!")
+            self.logger.info(f"  Refund ID: {refund.id}")
+            self.logger.info(f"  Amount: {refund.amount} {refund.currency.upper()}")
+            self.logger.info(f"  Status: {refund.status}")
+            self.logger.info(f"  Reason: {refund.reason}")
+
+            return {
+                'success': True,
+                'message': f'Refund created successfully: {refund.amount} cents',
+                'refund_id': refund.id,
+                'refund_amount': refund.amount,
+                'refund_currency': refund.currency,
+                'refund_status': refund.status,
+                'refund_reason': refund.reason,
+                'customer_id': customer.id,
+                'subscription_id': active_sub.id,
+                'payment_intent_id': payment_intent_id,
+                'invoice_id': invoice.id
+            }
+
+        except stripe.error.InvalidRequestError as e:
+            self.logger.error(f"Stripe refund error: {e.user_message}")
+            return {
+                'success': False,
+                'message': f'Stripe error: {e.user_message}',
+                'error_code': e.code,
+                'error_type': 'stripe_error'
+            }
+        except ValueError as e:
+            self.logger.error(f"Validation error: {str(e)}")
+            return {
+                'success': False,
+                'message': str(e),
+                'error_type': 'validation_error'
+            }
+        except Exception as e:
+            self.logger.error(f"Unexpected error during refund: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Unexpected error: {str(e)}',
+                'error_type': 'unexpected_error'
+            }
+

@@ -127,5 +127,31 @@
       "manual_verification": true,
       "requires_tester_input": true
     }
+  },
+  "refund": {
+    "action_id": "refund",
+    "action_name": "Refund Payment",
+    "action_type": "refund",
+    "description": "Refund the subscription payment via Stripe API. Can perform full or partial refunds with different refund reasons.",
+    "parameters": {
+      "amount_and_reason": {
+        "description": "Format: 'amount' or 'amount:reason' or ':reason'. Amount in dollars (empty=full refund). Reason: duplicate, fraudulent, requested_by_customer",
+        "required": false,
+        "default": null,
+        "examples": [
+          "",
+          "50",
+          "49.99",
+          "50:duplicate",
+          ":fraudulent",
+          ":requested_by_customer"
+        ]
+      }
+    },
+    "requires_ui": false,
+    "verification": {
+      "check_subscription_status": true,
+      "check_refund_status": true
+    }
   }
 }
