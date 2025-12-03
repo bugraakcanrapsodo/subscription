@@ -37,6 +37,7 @@ def test_config(pytestconfig):
     return {
         'excel_file': pytestconfig.getoption("--excel"),
         'test_id': pytestconfig.getoption("--test-id"),
+        'test_tag': pytestconfig.getoption("--test-tag"),
         'playwright_url': pytestconfig.getoption("--playwright-url"),
         'cleanup_users': pytestconfig.getoption("--cleanup-users")
     }

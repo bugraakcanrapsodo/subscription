@@ -36,7 +36,7 @@ class RCloudPage extends BasePage {
     try {
       Logger.info('Checking for welcome popup...');
       // Wait for close button with a short timeout
-      await this.page.waitForSelector(this.selectors.closeButton, { timeout: 3000 });
+      await this.page.waitForSelector(this.selectors.closeButton, { timeout: 5000 });
       Logger.info('Welcome popup found, closing...');
       await this.click(this.selectors.closeButton);
       await this.page.waitForTimeout(1000); // Wait for popup to close
