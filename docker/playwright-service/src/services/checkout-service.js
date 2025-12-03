@@ -157,20 +157,20 @@ class CheckoutService {
         Logger.info(`Waiting for redirect to success or cancel URL (timeout: 60s)`);
         Logger.info(`  - Success URL pattern: ${successUrl}`);
         Logger.info(`  - Cancel URL pattern: ${cancelUrl}`);
-        
+
         try {
+          let detectedSuccessUrl = false;
+
           // Wait for URL to change to either success or cancel
           await page.waitForURL(url => {
             const currentUrl = url.toString();
-            Logger.debug(`Checking URL: ${currentUrl}`);
             
-            // Check if it's the success URL
             if (currentUrl.includes('membership?success') || currentUrl.includes(successUrl)) {
               Logger.info(`Success URL detected: ${currentUrl}`);
+              detectedSuccessUrl = true;  // Capture this immediately
               return true;
             }
             
-            // Check if it's the cancel URL (but not checkout URL)
             if (currentUrl.startsWith(cancelUrl) && !currentUrl.includes('checkout.stripe.com')) {
               Logger.info(`Cancel URL detected: ${currentUrl}`);
               return true;
@@ -179,9 +179,8 @@ class CheckoutService {
             return false;
           }, { timeout: 60000 });
           
-          // Check which URL we landed on
-          const finalUrl = page.url();
-          paymentSucceeded = finalUrl.includes('membership?success');
+          // Use the flag we set in the callback, not the current URL
+          paymentSucceeded = detectedSuccessUrl;
           Logger.info(`Redirect completed - Payment ${paymentSucceeded ? 'SUCCEEDED' : 'FAILED'}`);
           
           // If payment succeeded and we're on the membership page, close welcome popup

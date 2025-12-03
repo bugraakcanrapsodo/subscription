@@ -75,6 +75,10 @@ def pytest_addoption(parser):
         help="Specific test ID to run"
     )
     parser.addoption(
+        "--test-tag", action="store",
+        help="Filter tests by tag(s). Single: 'smoke'. Multiple: 'smoke:refund' (runs tests matching ANY tag)"
+    )
+    parser.addoption(
         "--playwright-url", action="store", default="http://localhost:3001",
         help="Playwright service URL (default: http://localhost:3001)"
     )

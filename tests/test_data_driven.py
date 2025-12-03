@@ -19,7 +19,13 @@ def test_data_driven_execution(test_config, test_executor):
         
         # Run specific test
         pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --test-id MVP001 -v -s
+
+        # Run tests by single tag
+        pytest tests/test_data_driven.py --excel examples/premium_regression.csv --test-tag smoke -v -s
         
+        # Run tests by multiple tags (OR logic - matches ANY tag)
+        pytest tests/test_data_driven.py --excel examples/premium_regression.csv --test-tag smoke:refund -v -s
+
         # Run with cleanup
         pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --cleanup-users -v -s
     """
@@ -35,7 +41,8 @@ def test_data_driven_execution(test_config, test_executor):
     # Run tests
     test_results = test_executor.run_tests_from_file(
         file_path=excel_path,
-        test_id=test_config['test_id']
+        test_id=test_config['test_id'],
+        test_tag=test_config['test_tag']
     )
     
     # Check if any test failed

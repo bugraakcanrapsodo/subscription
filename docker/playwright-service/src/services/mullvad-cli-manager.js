@@ -98,11 +98,12 @@ class MullvadCLIManager {
   }
   
   /**
-   * Connect to Mullvad VPN country using CLI
+   * Connect to Mullvad VPN country using CLI with retry on location mismatch
    * @param {string} country - Country code (e.g., 'de', 'us', 'jp')
+   * @param {number} maxRetries - Maximum number of retry attempts for location mismatch (default: 3)
    * @returns {Promise<Object>} Connection result with IP info
    */
-  async connect(country) {
+  async connect(country, maxRetries = 3) {
     // Ensure initialized
     if (!this.initialized) {
       const initResult = await this.initialize();
@@ -111,61 +112,120 @@ class MullvadCLIManager {
       }
     }
     
-    Logger.info(`🔒 Connecting to Mullvad VPN: ${country.toUpperCase()} (using CLI)`);
+    let lastVerification = null;
     
-    // Disconnect existing connection (with timeout to prevent hang)
-    if (this.currentConnection) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      Logger.info(`🔒 Connecting to Mullvad VPN: ${country.toUpperCase()} (attempt ${attempt}/${maxRetries})`);
+
+      // Disconnect existing connection (with timeout to prevent hang)
+      if (this.currentConnection) {
+        try {
+          await this.disconnect();
+        } catch (error) {
+          Logger.warn(`Disconnect failed, continuing: ${error.message}`);
+          this.currentConnection = null;
+        }
+      }
+
       try {
-        await this.disconnect();
+        // Set relay country using Mullvad CLI
+        Logger.info(`Setting relay country to: ${country}`);
+        await execPromise(`mullvad relay set location ${country}`);
+
+        // Connect to VPN
+        Logger.info('Connecting to VPN...');
+        await execPromise('mullvad connect');
+
+        // Wait for connection to establish
+        await this.waitForConnection(12);
+
+        this.currentConnection = country;
+
+        Logger.info(`✅ Connected to Mullvad VPN: ${country.toUpperCase()}`);
+
+        // Wait a moment for network to stabilize before verification
+        await this.sleep(1000);
+
+        // Verify actual external location
+        const locationVerification = await this.verifyExternalLocation(country);
+        lastVerification = locationVerification;
+
+        if (locationVerification.success) {
+          Logger.info(`✅ Location verified: External IP is from ${locationVerification.detectedCountry.toUpperCase()}`);
+          Logger.info(`   IP: ${locationVerification.ip}, City: ${locationVerification.city || 'N/A'}`);
+
+          return {
+            success: true,
+            country: country,
+            message: `Connected to ${country.toUpperCase()}`,
+            verification: locationVerification,
+            attempts: attempt
+          };
+        }
+
+        // Location mismatch detected
+        Logger.warn(`⚠️  Location verification failed (attempt ${attempt}/${maxRetries}): ${locationVerification.message}`);
+        Logger.warn(`   Expected: ${country.toUpperCase()}, Got: ${locationVerification.detectedCountry || 'unknown'}`);
+
+        if (attempt < maxRetries) {
+          Logger.info(`🔄 Disconnecting and retrying connection to ${country.toUpperCase()}...`);
+
+          // Disconnect before retry
+          try {
+            await this.disconnect();
+          } catch (disconnectError) {
+            Logger.warn(`Disconnect before retry failed: ${disconnectError.message}`);
+            this.currentConnection = null;
+          }
+
+          // Small delay before retry
+          await this.sleep(2000);
+        }
+
       } catch (error) {
-        Logger.warn(`Disconnect failed, continuing: ${error.message}`);
-        this.currentConnection = null;
+        Logger.error(`❌ Mullvad VPN connection attempt ${attempt} failed: ${error.message}`);
+
+        // Cleanup on failure
+        try {
+          await this.disconnect();
+        } catch (disconnectError) {
+          this.currentConnection = null;
+        }
+
+        if (attempt >= maxRetries) {
+          throw new Error(`Failed to connect to Mullvad VPN (${country}) after ${maxRetries} attempts: ${error.message}`);
+        }
+
+        // Small delay before retry
+        await this.sleep(2000);
       }
     }
     
-    try {
-      // Set relay country using Mullvad CLI
-      Logger.info(`Setting relay country to: ${country}`);
-      await execPromise(`mullvad relay set location ${country}`);
-      
-      // Connect to VPN
-      Logger.info('Connecting to VPN...');
-      await execPromise('mullvad connect');
-      
-      // Wait for connection to establish (reduced from 15s to 12s)
-      await this.waitForConnection(12);
-      
-      this.currentConnection = country;
-      
-      Logger.info(`✅ Connected to Mullvad VPN: ${country.toUpperCase()}`);
-      
-      // Verify actual external location
-      const locationVerification = await this.verifyExternalLocation(country);
-      if (!locationVerification.success) {
-        Logger.warn(`⚠️  Location verification warning: ${locationVerification.message}`);
-        Logger.warn(`   Expected: ${country.toUpperCase()}, Got: ${locationVerification.detectedCountry || 'unknown'}`);
-        // Don't fail the connection, just warn - sometimes geolocation services have delays
-      } else {
-        Logger.info(`✅ Location verified: External IP is from ${locationVerification.detectedCountry.toUpperCase()}`);
-        Logger.info(`   IP: ${locationVerification.ip}, City: ${locationVerification.city || 'N/A'}`);
-      }
-      
-      return {
-        success: true,
-        country: country,
-        message: `Connected to ${country.toUpperCase()}`,
-        verification: locationVerification
-      };
-      
-    } catch (error) {
-      Logger.error(`❌ Mullvad VPN connection failed: ${error.message}`);
-      
-      // Cleanup on failure
-      await this.disconnect();
-      
-      throw new Error(`Failed to connect to Mullvad VPN (${country}): ${error.message}`);
-    }
+    // If we've exhausted all retries due to location mismatch
+    Logger.error(`❌ Failed to verify location after ${maxRetries} attempts`);
+    Logger.error(`   Requested: ${country.toUpperCase()}, Last detected: ${lastVerification?.detectedCountry?.toUpperCase() || 'unknown'}`);
+
+    // Option: Fail hard or proceed with warning
+    // Currently: Fail hard - uncomment below to proceed with warning instead
+    throw new Error(
+      `Location verification failed after ${maxRetries} attempts. ` +
+      `Expected: ${country.toUpperCase()}, Got: ${lastVerification?.detectedCountry?.toUpperCase() || 'unknown'}. ` +
+      `This may indicate VPN routing issues.`
+    );
+
+    /* ALTERNATIVE: Proceed with warning (uncomment if preferred)
+    Logger.warn(`⚠️  Proceeding despite location mismatch after ${maxRetries} attempts`);
+    return {
+      success: true,
+      country: country,
+      message: `Connected to ${country.toUpperCase()} (location verification failed)`,
+      verification: lastVerification,
+      attempts: maxRetries,
+      locationMismatch: true
+    };
+    */
   }
+
   
   /**
    * Disconnect from Mullvad VPN
