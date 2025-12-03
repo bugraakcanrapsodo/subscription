@@ -102,6 +102,8 @@ class ActionExecutor:
             return self._execute_reactivate_action(action_name, action_config)
         elif action_type == 'advance_time':
             return self._execute_advance_time_action(action_name, action_config, param, subscription_state)
+        elif action_type == 'verify':
+            return self._execute_verify_action(action_name, action_config, param)
         # TODO: Implement upgrade, downgrade actions (must return subscription_type)
         else:
             raise NotImplementedError(f"Action type not implemented: {action_type}")
@@ -508,7 +510,6 @@ class ActionExecutor:
             # Get user information for instructions
             user_data = self.mlm_api.get_user_data()
             user_email = user_data.get('email', 'N/A')
-            user_id = user_data.get('_id', 'N/A')
             
             # Calculate simulated current date and target date
             # Use the subscription start date + previously advanced days
@@ -545,13 +546,12 @@ class ActionExecutor:
             print("⏰ MANUAL TIME ADVANCEMENT REQUIRED")
             print("=" * 80)
             print(f"User Email: {user_email}")
-            print(f"User ID: {user_id}")
             print(f"Days to Advance: {days_to_advance} days")
             print("\nINSTRUCTIONS:")
             print("1. Open Stripe Dashboard (Test Mode)")
             print(f"2. Search for customer email: {user_email}")
             print("3. Click on the customer's active subscription")
-            print("4. Click 'Advanced time' or 'Run simulation' button")
+            print("4. Click 'Run simulation' button")
             print(f"5. Enter the exact date and time: {target_date_str} (GMT+8)")
             print("6. Click 'Advance time' button in Stripe")
             print("7. Verify the time was advanced successfully")
@@ -597,3 +597,101 @@ class ActionExecutor:
                 'error': str(e)
             }
 
+    def _execute_verify_action(self, action_name: str, action_config: Dict[str, Any], param: str = None) -> Dict[str, Any]:
+        """
+        Execute manual verification step - pause and wait for tester input
+
+        This method follows the same pattern as other action executors:
+        - Takes action_name, action_config, and param
+        - Returns dict with success and details
+
+        Args:
+            action_name: Name of the action (verify)
+            action_config: Action configuration from actions.json
+            param: Hint text to show the tester about what to verify
+
+        Returns:
+            Dict containing verification results with keys:
+                - success: bool (whether manual verification passed)
+                - hint: str (the hint shown to tester)
+                - result: str ('passed' or 'failed')
+                - notes: str (detailed notes from tester)
+                - timestamp: str (when verification was performed)
+                - action_type: str ('verification') - for routing in executor
+        """
+        from datetime import datetime
+
+        self.logger.info("=" * 80)
+        self.logger.info("🔍 MANUAL VERIFICATION REQUIRED")
+        self.logger.info("=" * 80)
+
+        # Get user information
+        user_data = self.mlm_api.get_user_data()
+        user_email = user_data.get('email', 'N/A')
+
+        # Show user info and the hint
+        print(f"\n👤 USER INFO:")
+        print(f"   Email: {user_email}")
+
+        # Show the hint
+        hint_text = param if param else "Verify the expected behavior manually"
+        print(f"\n📌 VERIFICATION HINT:")
+        print(f"   {hint_text}")
+        print("\n" + "-" * 80)
+
+        # Wait for pass/fail input
+        while True:
+            print("\n⏸️  Please perform the manual verification step.")
+            print("   After verification, enter:")
+            print("   - 'p' or 'pass' if the step PASSED ✓")
+            print("   - 'f' or 'fail' if the step FAILED ✗")
+            print()
+
+            result_input = input("   Enter result (p/f): ").strip().lower()
+
+            if result_input in ['p', 'pass', 'passed']:
+                result = 'passed'
+                success = True
+                print("\n   ✓ Verification marked as PASSED")
+                break
+            elif result_input in ['f', 'fail', 'failed']:
+                result = 'failed'
+                success = False
+                print("\n   ✗ Verification marked as FAILED")
+                break
+            else:
+                print(f"   ⚠️  Invalid input: '{result_input}'. Please enter 'p' or 'f'")
+
+        # Get detailed notes
+        print("\n" + "-" * 80)
+        print("📝 Please provide detailed notes about this verification step:")
+        print("   (What was verified? What was the result? Any issues?)")
+        print("   Press ENTER on an empty line when done.")
+        print()
+
+        notes_lines = []
+        while True:
+            line = input("   ")
+            if line.strip() == "":
+                break
+            notes_lines.append(line)
+
+        notes = "\n".join(notes_lines) if notes_lines else "No additional notes provided"
+
+        # Log the results
+        timestamp = datetime.now().isoformat()
+        self.logger.info(f"Manual verification completed: {result.upper()}")
+        self.logger.info(f"Notes: {notes}")
+
+        print("\n" + "=" * 80)
+        print(f"✓ Manual verification step recorded")
+        print("=" * 80 + "\n")
+
+        return {
+            'success': success,
+            'hint': hint_text,
+            'result': result,
+            'notes': notes,
+            'timestamp': timestamp,
+            'action_type': 'verify'
+        }
