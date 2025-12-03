@@ -108,5 +108,24 @@
       "check_dates": true,
       "calculate_status_from_time_advance": true
     }
+  },
+  "verify": {
+    "action_id": "verify",
+    "action_name": "Manual Verification",
+    "action_type": "verify",
+    "description": "Pause test execution for manual verification step. Tester performs manual check and enters pass/fail result with detailed notes.",
+    "parameters": {
+      "hint": {
+        "description": "Hint text to show the tester about what to verify (e.g., 'Check that user can access premium features in app')",
+        "required": true,
+        "type": "string"
+      }
+    },
+    "requires_ui": false,
+    "is_manual": true,
+    "verification": {
+      "manual_verification": true,
+      "requires_tester_input": true
+    }
   }
 }

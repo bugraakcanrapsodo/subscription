@@ -172,7 +172,7 @@ class CheckoutPage extends BasePage {
     try {
       // Click the currency button using template selector
       const selector = this.getOptionSelector(this.selectors.currencyButtonTemplate, currency);
-      await this.page.locator(selector).click();
+      await this.click(selector);
       Logger.info(`Currency ${currency} selected successfully`);
       
       // Wait for page to update after currency selection
@@ -368,8 +368,7 @@ class CheckoutPage extends BasePage {
    */
   async clickPayButton() {
     Logger.info('Clicking Pay/Start Trial button');
-    await this.page.locator(this.selectors.payButton).click();
-    Logger.info('Pay button clicked');
+    await this.click(this.selectors.payButton);
   }
 
   /**

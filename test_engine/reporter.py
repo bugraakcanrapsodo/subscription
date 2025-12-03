@@ -121,12 +121,19 @@ class Reporter:
                 lines.append(f"  Actions Executed:")
                 for idx, action_result in enumerate(result['action_results'], 1):
                     action_name = action_result['action']
-                    if action_result['success']:
-                        lines.append(f"    {idx}. {action_name}")
+                    param = action_result.get('param')
+
+                    # Format with parameter if present
+                    if param:
+                        action_display = f"{action_name} ({param})"
                     else:
-                        lines.append(f"    {idx}. {action_name} [FAILED]")
-                        lines.append(f"       Error: {action_result.get('message', 'Unknown error')}")
-            
+                        action_display = action_name
+
+                    if action_result['success']:
+                        lines.append(f"    {idx}. {action_display}")
+                    else:
+                        lines.append(f"    {idx}. {action_display} [FAILED]")
+
             # Verification results - grouped by action
             lines.append(f"  Verifications:")
             
@@ -163,11 +170,37 @@ class Reporter:
                         action_verifications[action_name]['user_api'] = verify_result
                     elif verification_type == 'admin_api':
                         action_verifications[action_name]['admin_api'] = verify_result
+                    elif verification_type == 'manual':
+                        action_verifications[action_name]['manual'] = verify_result
+
             
             # Now output verifications grouped by action
             for action_name, verifications in action_verifications.items():
                 lines.append(f"\n    Action: {action_name}")
                 
+                if 'manual' in verifications:
+                    verify_result = verifications['manual']
+                    manual = verify_result.get('manual_verification', {})
+                    passed = manual.get('passed', False)
+                    result_text = manual.get('result', 'unknown')
+                    hint = manual.get('hint', '')
+                    notes = manual.get('notes', '')
+                    timestamp = manual.get('timestamp', '')
+
+                    lines.append(f"      {'✓' if passed else '✗'} Manual Verification: {result_text.upper()}")
+                    lines.append(f"         Hint: {hint}")
+                    lines.append(f"         Timestamp: {timestamp}")
+
+                    if notes:
+                        lines.append(f"         Notes:")
+                        for note_line in notes.split('\n'):
+                            lines.append(f"           {note_line}")
+
+                    # Manual verification actions don't have checkout/user/admin API verifications
+                    # So continue to next action
+                    continue
+
+
                 # 1. Stripe Checkout Verification (for purchase actions)
                 if 'checkout' in verifications:
                     checkout_data = verifications['checkout']
@@ -476,4 +509,3 @@ class Reporter:
             # Show user email for failed tests to make debugging easier
             if not result['passed'] and user_email != 'N/A':
                 print(f"       User: {user_email}")
-

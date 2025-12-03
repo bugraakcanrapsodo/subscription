@@ -224,10 +224,10 @@ class TestExecutor:
                         'details': action_result
                     })
                     
+                    action_type = self.action_executor.actions_config[action_name].get('action_type')
+
                     # Update subscription state from action results
                     if action_result.get('success'):
-                        action_type = self.action_executor.actions_config[action_name].get('action_type')
-                        
                         # Track subscription_type from purchase/upgrade/downgrade actions
                         # Also extract plan_code and duration_days from subscription config
                         if action_result.get('subscription_type'):
@@ -260,13 +260,45 @@ class TestExecutor:
                             subscription_state['days_advanced'] += days_advanced
                             self.logger.info(f"Total days advanced: {subscription_state['days_advanced']}")
                     
+                    # Check if this is a manual verification action
+                    if action_type == 'verify':
+                        # Manual verification action - no user/admin API verification needed
+                        # The action itself returns the verification result
+
+                        self.logger.info(f"Processing manual verification result...")
+
+                        # Store the manual verification result
+                        verify_result = {
+                            'verified': True,
+                            'action_name': action_name,
+                            'verification_type': 'manual',
+                            'manual_verification': {
+                                'passed': action_result.get('success', False),
+                                'result': action_result.get('result', 'unknown'),
+                                'hint': action_result.get('hint', ''),
+                                'notes': action_result.get('notes', ''),
+                                'timestamp': action_result.get('timestamp', '')
+                            }
+                        }
+                        result['verification_results'].append(verify_result)
+
+                        # If verification failed, mark test as failed
+                        if not action_result.get('success'):
+                            all_actions_passed = False
+                            self.logger.error(f"Manual verification failed: {action_result.get('hint')}")
+                        else:
+                            self.logger.info(f"✓ Manual verification passed")
+
+                        # Skip the normal user/admin verification for this action
+                        continue
+
                     if not action_result.get('success'):
                         all_actions_passed = False
                         self.logger.error(f"Action failed: {action_result.get('message')}")
                         self.logger.error(f"Stopping test execution - cannot proceed with subsequent actions")
                         # STOP execution - don't verify failed action or run subsequent actions
                         break
-                    
+
                     # RE-LOGIN after payment to refresh session and get updated subscription data
                     self.logger.info(f"Re-logging in to refresh session after payment...")
                     relogin_response = self.mlm_api.login(user_email, "Aa123456")

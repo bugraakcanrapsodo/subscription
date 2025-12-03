@@ -107,22 +107,31 @@ class BasePage {
 
   /**
    * Click on an element with fallback to JavaScript click
-   * Tries standard Playwright click first, falls back to JS click if visibility checks fail
+   * Waits for element to be enabled if it's initially disabled
    * @param {string} locator - Element locator
+   * @param {number} enabledTimeout - Time to wait for element to become enabled (default: 5000)
    * @returns {Promise<void>}
    */
-  async click(locator) {
+  async click(locator, enabledTimeout = 5000) {
+    const element = this.page.locator(locator);
+
+    // Wait for element to become enabled if disabled
+    if (await element.isDisabled()) {
+      Logger.info(`Element ${locator} is disabled, waiting up to ${enabledTimeout}ms...`);
+      await expect(element).toBeEnabled({ timeout: enabledTimeout });
+    }
+
+    // Attempt the click
     try {
-      // Try standard Playwright click (with actionability checks)
-      await this.page.locator(locator).click({ timeout: 2000 });
+      await element.click({ timeout: 2000 });
       Logger.debug(`Clicked element: ${locator}`);
     } catch (error) {
-      // If standard click fails (visibility/actionability issues), use JavaScript click
       Logger.warn(`Standard click failed for ${locator}, using JavaScript click fallback`);
-      await this.page.locator(locator).evaluate(el => el.click());
+      await element.evaluate(el => el.click());
       Logger.debug(`JavaScript click successful: ${locator}`);
     }
   }
+
 
   /**
    * Scroll element into view

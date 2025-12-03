@@ -10,7 +10,7 @@ MVP008,Purchase 1Y Premium then Cancel then Advance 46 days (Trial Expired) - Un
 MVP009,Purchase 1Y Premium then Advance 46 days (Trial to Active) - United States,us,Active,purchase_1y_premium,visa_success,advance_time,46,,,,
 MVP010,Purchase 1Y Premium then Cancel then Reactivate then Advance 46 days (Trial Expired) - United States,us,Active,purchase_1y_premium,visa_success,cancel,,reactivate,,advance_time,46
 MVP011,Purchase 1Y Premium then Advance 366 days (Auto-renew) - United States,us,None,purchase_2y_premium,visa_success,advance_time,701,,,,
-,,,,,,,,,,,
+MVP012,Purchase 1Y Premium - No Trial - Canada,ca,None,purchase_1y_premium,visa_success,verify,Check RCloud Membership page,,,,
 ,,,,,,,,,,,
 ,,,,,,,,,,,
 ,,,,,,,,,,,
