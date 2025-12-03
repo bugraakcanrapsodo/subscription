@@ -104,6 +104,8 @@ class ActionExecutor:
             return self._execute_advance_time_action(action_name, action_config, param, subscription_state)
         elif action_type == 'verify':
             return self._execute_verify_action(action_name, action_config, param)
+        elif action_type == 'refund':
+            return self._execute_refund_action(action_name, action_config, param)
         # TODO: Implement upgrade, downgrade actions (must return subscription_type)
         else:
             raise NotImplementedError(f"Action type not implemented: {action_type}")
@@ -695,3 +697,152 @@ class ActionExecutor:
             'timestamp': timestamp,
             'action_type': 'verify'
         }
+
+
+    def _execute_refund_action(
+        self,
+        action_name: str,
+        action_config: Dict,
+        param: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a refund action via Stripe API.
+
+        This action refunds the latest payment for the current user's subscription.
+        It can perform full or partial refunds with different refund reasons.
+
+        Args:
+            action_name: Action name (e.g., 'refund')
+            action_config: Action configuration from actions.json
+            param: Optional parameter in format "amount" or "amount:reason" or ":reason"
+                - amount: Amount in dollars with decimal (empty for full refund)
+                - reason: duplicate, fraudulent, or requested_by_customer
+
+                Examples:
+                - None or "" → Full refund, reason: requested_by_customer
+                - "50" → Partial refund $50.00, reason: requested_by_customer
+                - "50.00" → Partial refund $50.00, reason: requested_by_customer
+                - "49.99:duplicate" → Partial refund $49.99, reason: duplicate
+                - ":fraudulent" → Full refund, reason: fraudulent
+
+        Returns:
+            Result dictionary with:
+            - success: bool
+            - message: str
+            - action: str
+            - refund_details: dict (refund_id, amount, status, etc.)
+        """
+        from utils.stripe_helper import StripeTestHelper
+
+        self.logger.info(f"Executing refund action: {action_name}")
+
+        try:
+            # Parse param: "amount:reason" or "amount" or ":reason" or empty
+            amount_cents = None
+            reason = "requested_by_customer"  # default
+
+            if param:
+                param = param.strip()
+
+                if ':' in param:
+                    # Format: "amount:reason" or ":reason"
+                    parts = param.split(':', 1)
+                    amount_str = parts[0].strip()
+                    reason_str = parts[1].strip() if len(parts) > 1 else ""
+
+                    if amount_str:
+                        try:
+                            # Parse as decimal dollars and convert to cents
+                            amount_dollars = float(amount_str)
+                            amount_cents = int(round(amount_dollars * 100))
+                        except ValueError:
+                            raise ValueError(f"Invalid refund amount: {amount_str}. Must be a number (e.g., 50 or 49.99).")
+
+                    if reason_str:
+                        reason = reason_str
+                else:
+                    # Format: "amount" only
+                    try:
+                        # Parse as decimal dollars and convert to cents
+                        amount_dollars = float(param)
+                        amount_cents = int(round(amount_dollars * 100))
+                    except ValueError:
+                        raise ValueError(f"Invalid refund amount: {param}. Must be a number (e.g., 50 or 49.99).")
+
+            # Validate reason
+            valid_reasons = ['duplicate', 'fraudulent', 'requested_by_customer']
+            if reason not in valid_reasons:
+                raise ValueError(f"Invalid refund reason: {reason}. Must be one of: {valid_reasons}")
+
+            # Log parsed parameters
+            if amount_cents:
+                self.logger.info(f"Refund amount: ${amount_cents/100:.2f} ({amount_cents} cents)")
+            else:
+                self.logger.info("Refund amount: Full refund")
+            self.logger.info(f"Refund reason: {reason}")
+
+            # Get user email from current session
+            user_data = self.mlm_api.get_user_data()
+            user_email = user_data.get('email')
+
+            if not user_email:
+                raise ValueError("No user email found. User must be logged in.")
+
+            self.logger.info(f"Processing refund for user: {user_email}")
+
+            # Initialize Stripe helper and execute refund
+            stripe_helper = StripeTestHelper()
+            refund_result = stripe_helper.refund_subscription_payment(
+                email=user_email,
+                amount_cents=amount_cents,
+                reason=reason
+            )
+
+            if refund_result.get('success'):
+                self.logger.info("✓ Refund completed successfully")
+                self.logger.info(f"  Refund ID: {refund_result.get('refund_id')}")
+                self.logger.info(f"  Amount: {refund_result.get('refund_amount')} {refund_result.get('refund_currency', 'cents').upper()}")
+                self.logger.info(f"  Status: {refund_result.get('refund_status')}")
+
+                return {
+                    'success': True,
+                    'message': f"Refund successful: {refund_result.get('refund_amount')} cents",
+                    'action': action_name,
+                    'refund_details': {
+                        'refund_id': refund_result.get('refund_id'),
+                        'amount_cents': refund_result.get('refund_amount'),
+                        'currency': refund_result.get('refund_currency'),
+                        'status': refund_result.get('refund_status'),
+                        'reason': refund_result.get('refund_reason'),
+                        'payment_intent_id': refund_result.get('payment_intent_id'),
+                        'invoice_id': refund_result.get('invoice_id')
+                    },
+                    'customer_id': refund_result.get('customer_id'),
+                    'subscription_id': refund_result.get('subscription_id')
+                }
+            else:
+                self.logger.error(f"✗ Refund failed: {refund_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"Refund failed: {refund_result.get('message')}",
+                    'action': action_name,
+                    'error_type': refund_result.get('error_type'),
+                    'error_details': refund_result
+                }
+
+        except ValueError as e:
+            self.logger.error(f"Validation error: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Validation error: {str(e)}',
+                'action': action_name,
+                'error': str(e)
+            }
+        except Exception as e:
+            self.logger.error(f"Error executing refund action: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Exception during refund: {str(e)}',
+                'action': action_name,
+                'error': str(e)
+            }
