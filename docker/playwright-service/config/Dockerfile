@@ -1,7 +1,24 @@
 FROM mcr.microsoft.com/playwright:v1.56.1-noble
 
-# Install Xvfb
-RUN apt-get update && apt-get install -y xvfb && rm -rf /var/lib/apt/lists/*
+# Combine all system package installations in one layer to improve caching
+# Using --no-install-recommends reduces package size
+# Cleaning up in the same RUN command reduces layer size
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        xvfb \
+        curl \
+        wget \
+        gnupg \
+        iputils-ping \
+        iproute2 \
+        ca-certificates \
+        ffmpeg && \
+    curl -fsSLo /usr/share/keyrings/mullvad-keyring.asc https://repository.mullvad.net/deb/mullvad-keyring.asc && \
+    echo "deb [signed-by=/usr/share/keyrings/mullvad-keyring.asc arch=$(dpkg --print-architecture)] https://repository.mullvad.net/deb/stable stable main" > /etc/apt/sources.list.d/mullvad.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends mullvad-vpn && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app
 

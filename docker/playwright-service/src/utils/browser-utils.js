@@ -2,6 +2,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const Logger = require('./logger');
+const MediaUtils = require('./media-utils');
 
 /**
  * Utility class for browser-related operations
@@ -42,6 +43,9 @@ class BrowserUtils {
     });
 
     const page = await context.newPage();
+
+    // Capture recording start time for timestamp overlay
+    MediaUtils.recordingStartTime = Math.floor(Date.now() / 1000);
 
     // Add event listeners for debugging
     page.on('console', msg => Logger.debug(`PAGE: ${msg.text()}`));
