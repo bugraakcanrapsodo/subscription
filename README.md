@@ -256,6 +256,12 @@ MULLVAD_ACCOUNT=your_account_number
 
 ### Step 8: Open Project in VS Code
 
+**Open the Project**:
+- Launch VS Code
+- Go to File → Open Folder (or press ⌘O)
+- Navigate to the `subscription` folder
+- Click Open
+
 #### VS Code Workspace Setup:
 
 **Select Python Interpreter**:
@@ -277,15 +283,24 @@ MULLVAD_ACCOUNT=your_account_number
 
 ### Step 9: VS Code Local Execution
 
-- Follow the [instructions here](https://code.visualstudio.com/docs/editor/debugging) to create a `launch.json` file and select **Python** as the environment
+**Create VS Code Configuration Folder**:
+```bash
+mkdir -p .vscode
+```
 
-- Use the following configuration. Pytest arguments are explained below:
+**Create Debug Configuration**:
+- In VS Code, create a file: `.vscode/launch.json`
+- Add the following configuration
+- Pytest arguments are explained below:
   - `-s`: Prevents capturing of output, allowing you to see print statements and logging in the console.
   - `-v`: Enables verbose output, providing detailed test results.
   - `"tests/test_data_driven.py"`: Specifies the main test file to run.
   - `--excel data/premium_regression.csv`: Specifies the target test csv file
+  - **Test Selection** (choose ONE of following):
   - `--test-tag refund`: Specifies the tags of tests to run. Only the tagged tests in test_tag column of csv file will be executed
   - `--test-id TC01`: Specifies the id of the test to run. Only the matching test in test_id column of csv file will be executed
+  - Remove both to run ALL tests
+
 
 ```json
 {
