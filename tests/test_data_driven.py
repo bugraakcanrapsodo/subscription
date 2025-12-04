@@ -13,21 +13,27 @@ def test_data_driven_execution(test_config, test_executor):
     """
     Main test function that executes data-driven tests from Excel/CSV
     
-    Usage:
-        # Run all tests from Excel file
-        pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx -v -s
-        
-        # Run specific test
-        pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --test-id MVP001 -v -s
+    Usage Examples:
 
-        # Run tests by single tag
-        pytest tests/test_data_driven.py --excel examples/premium_regression.csv --test-tag smoke -v -s
-        
-        # Run tests by multiple tags (OR logic - matches ANY tag)
-        pytest tests/test_data_driven.py --excel examples/premium_regression.csv --test-tag smoke:refund -v -s
+    1. Run all tests (default: delete user if test PASSES)
+       pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx -v -s
 
-        # Run with cleanup
-        pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --cleanup-users -v -s
+    2. Run specific test (default: delete user if test PASSES)
+       pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --test-id MVP001 -v -s
+
+    3. Never delete users (keep all users for debugging)
+       pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --cleanup-users never -v -s
+
+    4. Delete user only if test PASSES (default behavior)
+       pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --cleanup-users pass -v -s
+
+    5. Always delete users (regardless of pass/fail)
+       pytest tests/test_data_driven.py --excel examples/mvp_test_cases.xlsx --cleanup-users always -v -s
+
+    Cleanup Modes:
+        --cleanup-users never  : Don't delete any users (useful for debugging failed tests)
+        --cleanup-users pass   : Delete users ONLY if test passed (DEFAULT - keeps failed test users for investigation)
+        --cleanup-users always : Delete ALL users regardless of test result
     """
     # Check if Excel file is provided
     if not test_config['excel_file']:

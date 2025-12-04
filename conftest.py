@@ -83,8 +83,9 @@ def pytest_addoption(parser):
         help="Playwright service URL (default: http://localhost:3001)"
     )
     parser.addoption(
-        "--cleanup-users", action="store_true", default=False,
-        help="Delete test users after execution"
+        "--cleanup-users", action="store", default="passed",
+        choices=["never", "passed", "always"],
+        help="User cleanup mode: 'never' (no cleanup), 'passed' (cleanup on pass only, default), 'always' (cleanup regardless of result)"
     )
 
 
