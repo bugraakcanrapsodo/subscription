@@ -393,3 +393,37 @@ After test execution, check the following files to understand the test execution
 3. Edit test data
 4. Save with `⌘S`
 5. Run tests again
+
+---
+
+## Pytest Options Reference
+
+### Basic Test Execution:
+
+```bash
+# Run all tests from a CSV/Excel file
+pytest tests/test_data_driven.py --excel data/premium_regression.csv -v -s
+
+# Run specific test by ID
+pytest tests/test_data_driven.py --excel data/premium_regression.csv --test-id TC01 -v -s
+
+# Run tests by tag (multiple tags: 'smoke:refund' runs tests matching ANY tag)
+pytest tests/test_data_driven.py --excel data/premium_regression.csv --test-tag refund -v -s
+```
+
+### User Cleanup Options (--cleanup-users):
+
+- `never` : Keep all users (debugging failed tests)
+- `passed` : Delete users only if test passed (DEFAULT - keeps failed test users for investigation)
+- `always` : Delete all users regardless of result
+
+```bash
+# Never cleanup (keep all users)
+pytest tests/test_data_driven.py --excel data/file.csv --cleanup-users never -v -s
+```
+
+### Logging Options:
+
+- `--log-path` : Log directory (default: logs)
+- `--file-log-level` : File log level (DEBUG/INFO/WARNING/ERROR/CRITICAL, default: DEBUG)
+- `--console-log-level` : Console log level (DEBUG/INFO/WARNING/ERROR/CRITICAL, default: INFO)

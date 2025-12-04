@@ -27,7 +27,7 @@ class TestExecutor:
         self,
         mlm_api: MlmAPI,
         playwright_service_url: str = "http://localhost:3001",
-        cleanup_users: bool = False
+        cleanup_users: str = "passed"
     ):
         """
         Initialize test executor
@@ -35,12 +35,24 @@ class TestExecutor:
         Args:
             mlm_api: MLM API client instance
             playwright_service_url: URL of Playwright service
-            cleanup_users: Whether to delete users after test
+            cleanup_users: User cleanup mode - "never", "passed" (default), or "always"
         """
         self.mlm_api = mlm_api
         self.playwright_service_url = playwright_service_url
         self.cleanup_users = cleanup_users
         self.logger = Logger(__name__)
+
+        # Validate cleanup mode
+        valid_modes = ["never", "passed", "always"]
+        if self.cleanup_users not in valid_modes:
+            self.logger.warning(
+                f"Invalid cleanup mode '{self.cleanup_users}', defaulting to 'passed'. "
+                f"Valid modes: {valid_modes}"
+            )
+            self.cleanup_users = "passed"
+
+        # Log cleanup mode
+        self.logger.info(f"User cleanup mode: {self.cleanup_users}")
 
         # Initialize components (will be re-initialized per test with location and trial status)
         self.action_executor = None  # Will be initialized per test
@@ -456,9 +468,31 @@ class TestExecutor:
             # Calculate duration
             result['duration'] = time.time() - start_time
 
-            # Cleanup if enabled
-            if self.cleanup_users and result.get('user_email'):
-                self._cleanup_user()
+            # Smart cleanup based on mode and test result
+            if result.get('user_email'):
+                should_cleanup = False
+                cleanup_reason = ""
+
+                if self.cleanup_users == "always":
+                    should_cleanup = True
+                    cleanup_reason = "cleanup mode is 'always'"
+                elif self.cleanup_users == "passed" and result['passed']:
+                    should_cleanup = True
+                    cleanup_reason = "test PASSED and cleanup mode is 'passed'"
+                elif self.cleanup_users == "never":
+                    should_cleanup = False
+                    cleanup_reason = "cleanup mode is 'never'"
+                else:
+                    # cleanup_users == "passed" but test failed
+                    should_cleanup = False
+                    cleanup_reason = "test FAILED and cleanup mode is 'passed'"
+
+                if should_cleanup:
+                    self.logger.info(f"🗑️  Cleaning up user (reason: {cleanup_reason})")
+                    self._cleanup_user(result['user_email'])
+                else:
+                    self.logger.info(f"↪️  Keeping user account (reason: {cleanup_reason})")
+                    self.logger.info(f"   User email: {result['user_email']}")
 
         return result
 
@@ -548,13 +582,24 @@ class TestExecutor:
         else:
             self.logger.info(f"✓ Device registered successfully")
 
-    def _cleanup_user(self):
+    def _cleanup_user(self, user_email: str):
         """
         Cleanup user after test (delete account)
+
+        Args:
+            user_email: Email of the user to delete (for logging purposes)
         """
         try:
-            self.logger.info("Cleaning up user account...")
-            self.mlm_api.delete_user_account()
-        except Exception as e:
-            self.logger.warning(f"Failed to cleanup user: {str(e)}")
+            self.logger.info(f"Deleting user account: {user_email}")
+            delete_response = self.mlm_api.delete_user_account()
 
+            if delete_response.is_success():
+                self.logger.info(f"✓ User account deleted successfully: {user_email}")
+            else:
+                self.logger.warning(
+                    f"⚠️  User deletion API call succeeded but returned failure status: "
+                    f"{delete_response.message}"
+                )
+        except Exception as e:
+            self.logger.error(f"❌ Failed to cleanup user {user_email}: {str(e)}")
+            # Don't raise - cleanup failures shouldn't stop test execution
