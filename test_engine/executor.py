@@ -192,10 +192,6 @@ class TestExecutor:
             currency = self.location_manager.get_currency_for_location(country_code)
             country_name = self.location_manager.get_country_name_for_location(country_code)
 
-            result['country'] = country_code
-            result['country_name'] = country_name
-            result['currency'] = currency
-            result['trial_eligible'] = trial_eligible
 
             trial_status_text = "Trial Eligible" if trial_eligible else "No Trial"
             self.logger.info(f"Country: {country_code.upper()} ({country_name}) → Currency: {currency.upper()} | {trial_status_text}")
@@ -255,8 +251,7 @@ class TestExecutor:
                         'action': action_name,
                         'param': param,
                         'success': action_result.get('success', False),
-                        'message': action_result.get('message'),
-                        'details': action_result
+                        'message': action_result.get('message')  # Keep for failed action debugging
                     })
                     
                     # Extract checkout_verification from action result and add to verification_results

@@ -143,7 +143,9 @@ class Reporter:
                     if action_result['success']:
                         lines.append(f"    {idx}. {action_display}")
                     else:
+                        failure_msg = action_result.get('message', 'Unknown error')
                         lines.append(f"    {idx}. {action_display} [FAILED]")
+                        lines.append(f"        Error: {failure_msg}")
 
             # Verification results - grouped by action
             lines.append(f"  Verifications:")

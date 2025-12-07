@@ -326,33 +326,13 @@ class StripeCheckoutVerifier:
                     'verified': False,
                     'message': '; '.join(verification_issues),
                     'issues': verification_issues,
-                    'checks': checks,
-                    'checkout_details': checkout_details,
-                    'expected_price': expected_price,
-                    'actual_price': actual_total_price,  # Use total price for backward compatibility
-                    'expected_currency': currency,
-                    'actual_currency': actual_currency,
-                    'expected_product_name': expected_product_name,
-                    'actual_product_name': actual_product_name,
-                    'expected_trial_text': expected_trial_text,
-                    'actual_trial_text': actual_trial_text,
-                    'screenshot': result.get('data', {}).get('screenshot')
+                    'checks': checks
                 }
             else:
                 return {
                     'verified': True,
                     'message': 'Stripe checkout page verified successfully',
-                    'checks': checks,
-                    'checkout_details': checkout_details,
-                    'expected_price': expected_price,
-                    'actual_price': actual_total_price,  # Use total price for backward compatibility
-                    'expected_currency': currency,
-                    'actual_currency': actual_currency,
-                    'expected_product_name': expected_product_name,
-                    'actual_product_name': actual_product_name,
-                    'expected_trial_text': expected_trial_text,
-                    'actual_trial_text': actual_trial_text,
-                    'screenshot': result.get('data', {}).get('screenshot')
+                    'checks': checks
                 }
         
         except requests.exceptions.Timeout:
