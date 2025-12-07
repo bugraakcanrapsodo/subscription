@@ -50,7 +50,7 @@ class SubscriptionExpectations:
         Calculate expected status code and related info based on action type
         
         Args:
-            action_type: Type of action (purchase, cancel, reactivate, advance_time)
+            action_type: Type of action (purchase, cancel, refund, reactivate, advance_time)
             subscription_type: Subscription type (1y_premium, 2y_premium, etc)
             subscription_state: Current subscription state
             subscription_config: Subscription configuration
@@ -66,6 +66,15 @@ class SubscriptionExpectations:
             return {
                 'expected_status_code': 4,
                 'expected_status_name': 'cancelled',
+                'check_trial_period': False,
+                'trial_duration_days': None
+            }
+        
+        # REFUND action
+        if action_type == 'refund':
+            return {
+                'expected_status_code': 5,
+                'expected_status_name': 'refunded',
                 'check_trial_period': False,
                 'trial_duration_days': None
             }
@@ -113,7 +122,7 @@ class SubscriptionExpectations:
         to properly handle leap years. Stripe uses calendar years, so we must match.
 
         Args:
-            action_type: Type of action (purchase, cancel, reactivate, advance_time)
+            action_type: Type of action (purchase, cancel, refund, reactivate, advance_time)
             subscription_state: Current subscription state (contains ORIGINAL dates from purchase)
             actual_start_date: Actual start date from API (may be RENEWED subscription)
             actual_expire_date: Actual expire date from API (may be RENEWED subscription)
@@ -122,20 +131,20 @@ class SubscriptionExpectations:
         Returns:
             Tuple of (expected_start_date, expected_expire_date)
         """
-        # For purchase/cancel/reactivate: expect actual dates
-        if action_type in ['purchase', 'cancel', 'reactivate']:
+        # For purchase/cancel/refund/reactivate: expect actual dates
+        if action_type in ['purchase', 'cancel', 'refund', 'reactivate']:
             return (actual_start_date, actual_expire_date)
         
         # For advance_time: calculate based on cancellation state
         if action_type == 'advance_time':
             is_cancelled = subscription_state.get('is_cancelled', False) if subscription_state else False
             days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
-            duration_days = subscription_config.get('duration_days', 365) if subscription_config else 365
+            duration_months = subscription_config.get('duration_months', 12) if subscription_config else 12
             
             self.logger.info(f"Calculating expected dates for advance_time:")
             self.logger.info(f"  is_cancelled: {is_cancelled}")
             self.logger.info(f"  days_advanced: {days_advanced}")
-            self.logger.info(f"  duration_days: {duration_days}")
+            self.logger.info(f"  duration_months: {duration_months}")
             
             # If cancelled: dates stay unchanged
             if is_cancelled:
@@ -172,11 +181,11 @@ class SubscriptionExpectations:
                     # New subscription starts at OLD expire date
                     expected_start = expire_date
                     
-                    # CRITICAL: Use calendar-based arithmetic to handle leap years
-                    # Stripe adds N calendar years, not N×365 days
+                    # CRITICAL: Use calendar-based arithmetic to handle leap years and varying month lengths
+                    # Stripe adds N calendar months/years, not fixed day counts
                     expected_expire = self._add_subscription_duration(
                         start_date=expected_start,
-                        duration_days=duration_days
+                        duration_months=duration_months
                     )
 
                     exp_start_str = expected_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -203,64 +212,67 @@ class SubscriptionExpectations:
     def _add_subscription_duration(
         self,
         start_date: datetime,
-        duration_days: int
+        duration_months: int
     ) -> datetime:
         """
         Add subscription duration to start date using calendar-based arithmetic.
 
-        This properly handles leap years by using relativedelta instead of fixed day counts.
-        Stripe uses calendar years (e.g., "2 years from now"), not fixed day counts.
+        This properly handles leap years and varying month lengths by using relativedelta 
+        instead of fixed day counts. Stripe uses calendar months (e.g., "12 months from now"), 
+        not fixed day counts, which correctly handles February, leap years, and months with 
+        different day counts.
 
         Args:
             start_date: Starting date
-            duration_days: Duration in days (365, 730, etc.)
+            duration_months: Duration in months (12, 24, 120, etc.)
 
         Returns:
             Expire date calculated using calendar math
         """
-        # Determine number of years from duration_days
-        # 365 days = 1 year, 730 days = 2 years, etc.
-        if duration_days == 365:
-            years = 1
-        elif duration_days == 730:
-            years = 2
-        elif duration_days % 365 == 0:
-            years = duration_days // 365
+        # Use relativedelta for proper calendar arithmetic
+        # This handles:
+        # - Varying month lengths (28-31 days)
+        # - Leap years
+        # - Calendar year boundaries
+        expire_date = start_date + relativedelta(months=duration_months)
+
+        # Convert months to human-readable format for logging
+        if duration_months == 12:
+            duration_desc = "1 year"
+        elif duration_months == 24:
+            duration_desc = "2 years"
+        elif duration_months % 12 == 0:
+            years = duration_months // 12
+            duration_desc = f"{years} years"
         else:
-            # For non-standard durations (e.g., lifetime = 36500 days),
-            # fall back to day-based calculation
-            self.logger.info(f"  Non-standard duration {duration_days} days, using day-based calculation")
-            return start_date + timedelta(days=duration_days)
+            duration_desc = f"{duration_months} months"
 
-        # Use relativedelta for proper calendar arithmetic (handles leap years)
-        expire_date = start_date + relativedelta(years=years)
-
-        self.logger.info(f"  Added {years} calendar year(s) to {start_date.date()} → {expire_date.date()}")
+        self.logger.info(f"  Added {duration_desc} ({duration_months} months) to {start_date.date()} → {expire_date.date()}")
 
         return expire_date
 
-    def get_expected_duration_days(
+    def get_expected_duration_months(
         self,
         subscription_type: str = None,
         subscription_config: Dict[str, Any] = None
     ) -> int:
         """
-        Get expected duration in days for a subscription type
+        Get expected duration in months for a subscription type
 
         Args:
             subscription_type: Subscription type (1y_premium, 2y_premium, lifetime, etc)
             subscription_config: Subscription configuration (optional)
 
         Returns:
-            Expected duration in days (0 for lifetime)
+            Expected duration in months (120 for lifetime = 10 years)
         """
         if subscription_config is None and subscription_type:
             subscription_config = self.subscriptions_config.get(subscription_type, {})
 
         if subscription_config:
-            return subscription_config.get('duration_days', 365)
+            return subscription_config.get('duration_months', 12)
 
-        return 365  # Default to 1 year
+        return 12  # Default to 1 year
     
     def _calculate_status_after_time_advance(
         self,

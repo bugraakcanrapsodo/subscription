@@ -128,79 +128,162 @@ class StripeCheckoutVerifier:
             self.logger.info(f"  Total Amount: {checkout_details.get('totalAmount')}")
             self.logger.info(f"  Trial Amount: {checkout_details.get('trialAmount')}")
             
-            # Extract currency from amount string (e.g., "US$199.99" -> "usd", "¥29,800" -> "jpy")
+            # Extract currency from all amount fields to ensure consistency
+            subtotal_amount_str = checkout_details.get('subtotalAmount', '')
             total_amount_str = checkout_details.get('totalAmount', '')
+            trial_amount_str = checkout_details.get('trialAmount', '')
+            
+            # Extract currency from totalAmount as primary
             actual_currency = self._extract_currency_from_amount(total_amount_str, currency).lower()
             
-            self.logger.info(f"  Extracted Currency: {actual_currency.upper()} (expected: {currency.upper()})")
+            # Also extract from subtotal and trial to verify consistency
+            subtotal_currency = self._extract_currency_from_amount(subtotal_amount_str, currency).lower()
+            trial_currency = self._extract_currency_from_amount(trial_amount_str, currency).lower()
             
-            # Verify currency matches
-            if actual_currency != currency.lower():
-                return {
-                    'verified': False,
-                    'message': f'Currency mismatch: expected {currency.upper()}, got {actual_currency.upper()}',
-                    'expected_currency': currency,
-                    'actual_currency': actual_currency,
-                    'checkout_details': checkout_details
-                }
+            self.logger.info(f"  Extracted Currencies:")
+            self.logger.info(f"    Total: {actual_currency.upper()}")
+            self.logger.info(f"    Subtotal: {subtotal_currency.upper()}")
+            self.logger.info(f"    Trial: {trial_currency.upper()}")
+            self.logger.info(f"  Expected: {currency.upper()}")
+            
+            # Initialize granular checks dictionary
+            checks = {}
+            verification_issues = []
+            
+            # Verify primary currency matches expected
+            currency_passed = actual_currency == currency.lower()
+            checks['currency'] = {
+                'passed': currency_passed,
+                'expected': currency.upper(),
+                'actual': actual_currency.upper(),
+                'message': f'{actual_currency.upper()}'
+            }
+            
+            if not currency_passed:
+                verification_issues.append(f'Currency mismatch: expected {currency.upper()}, got {actual_currency.upper()}')
             else:
                 self.logger.info(f"✓ Currency verified: {actual_currency.upper()} (expected: {currency.upper()})")
             
-            # Verify price matches (Playwright returns 'totalAmount' field)
-            actual_total_amount = checkout_details.get('totalAmount', '')
-            actual_price = None
+            # Extract and verify all amount fields
+            actual_subtotal_amount_str = checkout_details.get('subtotalAmount', '')
+            actual_total_amount_str = checkout_details.get('totalAmount', '')
             
-            if actual_total_amount:
-                # Stripe returns amounts as strings like "CA$249.99" or "¥29,800"
-                # Extract numeric value
-                actual_price = self._extract_price_from_string(actual_total_amount, currency_info)
+            actual_subtotal_price = None
+            actual_total_price = None
             
-            # Fail if we couldn't extract the price
-            if actual_price is None:
-                return {
-                    'verified': False,
-                    'message': f'Could not extract price from checkout page. Total amount text: "{actual_total_amount}"',
-                    'expected_price': expected_price,
-                    'actual_price': None,
-                    'checkout_details': checkout_details
+            if actual_subtotal_amount_str:
+                actual_subtotal_price = self._extract_price_from_string(actual_subtotal_amount_str, currency_info)
+            
+            if actual_total_amount_str:
+                actual_total_price = self._extract_price_from_string(actual_total_amount_str, currency_info)
+            
+            # Verify subtotal amount
+            if actual_subtotal_price is None:
+                checks['subtotal_amount'] = {
+                    'passed': False,
+                    'expected': expected_price,
+                    'actual': None,
+                    'message': f'Could not extract from "{actual_subtotal_amount_str}"'
                 }
-            
-            # Compare prices (allow small tolerance for rounding)
-            if abs(actual_price - expected_price) > 0.01:
-                return {
-                    'verified': False,
-                    'message': f'Price mismatch: expected {expected_price}, got {actual_price}',
-                    'expected_price': expected_price,
-                    'actual_price': actual_price,
-                    'checkout_details': checkout_details
-                }
+                verification_issues.append(f'Could not extract subtotal amount from "{actual_subtotal_amount_str}"')
             else:
-                self.logger.info(f"✓ Price verified: {actual_price} (expected: {expected_price}) {currency.upper()}")
+                subtotal_passed = abs(actual_subtotal_price - expected_price) <= 0.01
+                checks['subtotal_amount'] = {
+                    'passed': subtotal_passed,
+                    'expected': expected_price,
+                    'actual': actual_subtotal_price,
+                    'message': f'{actual_subtotal_amount_str}'
+                }
+                
+                if not subtotal_passed:
+                    verification_issues.append(f'Subtotal amount mismatch: expected {expected_price}, got {actual_subtotal_price}')
+                else:
+                    self.logger.info(f"✓ Subtotal amount verified: {actual_subtotal_price} (expected: {expected_price})")
+            
+            # Verify total amount
+            if actual_total_price is None:
+                checks['total_amount'] = {
+                    'passed': False,
+                    'expected': expected_price,
+                    'actual': None,
+                    'message': f'Could not extract from "{actual_total_amount_str}"'
+                }
+                verification_issues.append(f'Could not extract total amount from "{actual_total_amount_str}"')
+            else:
+                total_passed = abs(actual_total_price - expected_price) <= 0.01
+                checks['total_amount'] = {
+                    'passed': total_passed,
+                    'expected': expected_price,
+                    'actual': actual_total_price,
+                    'message': f'{actual_total_amount_str}'
+                }
+                
+                if not total_passed:
+                    verification_issues.append(f'Total amount mismatch: expected {expected_price}, got {actual_total_price}')
+                else:
+                    self.logger.info(f"✓ Total amount verified: {actual_total_price} (expected: {expected_price})")
             
             # Verify product name contains expected membership name
             actual_product_name = checkout_details.get('productSummaryName', '')
             expected_product_name = subscription_config.get('description', '')
             
+            # Verify product name
             # Stripe might add "Try " prefix for trial products (e.g., "Try MLM2PRO Premium Membership")
             # So we check if the expected name is contained in the actual name
-            if expected_product_name not in actual_product_name:
-                return {
-                    'verified': False,
-                    'message': f'Product name mismatch: expected to contain "{expected_product_name}", got "{actual_product_name}"',
-                    'expected_price': expected_price,
-                    'actual_price': actual_price,
-                    'expected_product_name': expected_product_name,
-                    'actual_product_name': actual_product_name,
-                    'checkout_details': checkout_details
-                }
+            product_passed = expected_product_name in actual_product_name
+            checks['product_name'] = {
+                'passed': product_passed,
+                'expected': f'contains "{expected_product_name}"',
+                'actual': actual_product_name,
+                'message': f'"{actual_product_name}"'
+            }
+            
+            if not product_passed:
+                verification_issues.append(f'Product name mismatch: expected to contain "{expected_product_name}", got "{actual_product_name}"')
             else:
                 self.logger.info(f"✓ Product name verified: '{actual_product_name}' contains '{expected_product_name}'")
             
-            # Verify trial information if applicable
+            # Verify currency consistency across all amount fields
+            supports_trial = subscription_config.get('supports_trial', False)
+            if supports_trial and trial_eligible:
+                # For trial users: check total, subtotal, AND trial currency
+                all_currencies = [actual_currency, subtotal_currency, trial_currency]
+                unique_currencies = set(c for c in all_currencies if c)
+                currency_consistent = len(unique_currencies) == 1
+                
+                checks['currency_consistency'] = {
+                    'passed': currency_consistent,
+                    'expected': 'all fields use same currency',
+                    'actual': f'total:{actual_currency.upper()}, subtotal:{subtotal_currency.upper()}, trial:{trial_currency.upper()}',
+                    'message': 'consistent' if currency_consistent else f'inconsistent: {unique_currencies}'
+                }
+                
+                if not currency_consistent:
+                    verification_issues.append(f'Currency inconsistency: total={actual_currency.upper()}, subtotal={subtotal_currency.upper()}, trial={trial_currency.upper()}')
+                else:
+                    self.logger.info(f"✓ Currency consistent across all fields (total, subtotal, trial)")
+            else:
+                # For non-trial users: check only total and subtotal currency
+                all_currencies = [actual_currency, subtotal_currency]
+                unique_currencies = set(c for c in all_currencies if c)
+                currency_consistent = len(unique_currencies) == 1
+                
+                checks['currency_consistency'] = {
+                    'passed': currency_consistent,
+                    'expected': 'all fields use same currency',
+                    'actual': f'total:{actual_currency.upper()}, subtotal:{subtotal_currency.upper()}',
+                    'message': 'consistent' if currency_consistent else f'inconsistent: {unique_currencies}'
+                }
+                
+                if not currency_consistent:
+                    verification_issues.append(f'Currency inconsistency: total={actual_currency.upper()}, subtotal={subtotal_currency.upper()}')
+                else:
+                    self.logger.info(f"✓ Currency consistent between total and subtotal")
+            
+            # Verify trial-specific information if applicable
             actual_trial_text = None
             expected_trial_text = None
             
-            supports_trial = subscription_config.get('supports_trial', False)
             if supports_trial and trial_eligible:
                 trial_days = subscription_config.get('trial_period_days', 0)
                 trial_amount = checkout_details.get('trialAmount', '')
@@ -209,37 +292,48 @@ class StripeCheckoutVerifier:
                 expected_trial_text = f"{trial_days} days free"
                 actual_trial_text = product_summary
                 
-                # ACTUALLY VERIFY: Check if trial information is present
-                if f'{trial_days} days free' not in product_summary.lower() and '0' not in trial_amount:
-                    return {
-                        'verified': False,
-                        'message': f'Trial info mismatch: expected "{expected_trial_text}", got "{product_summary}"',
-                        'expected_price': expected_price,
-                        'actual_price': actual_price,
-                        'expected_product_name': expected_product_name,
-                        'actual_product_name': actual_product_name,
-                        'expected_trial_text': expected_trial_text,
-                        'actual_trial_text': product_summary,
-                        'checkout_details': checkout_details
-                    }
+                # Verify trial text in product summary
+                trial_text_passed = f'{trial_days} days free' in product_summary.lower()
+                checks['trial_info'] = {
+                    'passed': trial_text_passed,
+                    'expected': expected_trial_text,
+                    'actual': product_summary,
+                    'message': f'"{product_summary}"'
+                }
+                
+                if not trial_text_passed:
+                    verification_issues.append(f'Trial info mismatch: expected "{expected_trial_text}", got "{product_summary}"')
                 else:
                     self.logger.info(f"✓ Trial info verified: {trial_days} days free")
+                
+                # Verify trial amount is $0
+                trial_amount_passed = '0' in trial_amount if trial_amount else False
+                checks['trial_amount'] = {
+                    'passed': trial_amount_passed,
+                    'expected': '$0.00',
+                    'actual': trial_amount,
+                    'message': f'"{trial_amount}"'
+                }
+                
+                if not trial_amount_passed:
+                    verification_issues.append(f'Trial amount should be $0, got "{trial_amount}"')
+                else:
+                    self.logger.info(f"✓ Trial amount verified: {trial_amount}")
             
-            # Return ONLY what we actually verified
-            return {
-                'verified': True,
-                'message': 'Stripe checkout page verified successfully',
-                'checkout_details': checkout_details,
-                'expected_price': expected_price,
-                'actual_price': actual_price,
-                'expected_currency': currency,
-                'actual_currency': actual_currency,
-                'expected_product_name': expected_product_name,
-                'actual_product_name': actual_product_name,
-                'expected_trial_text': expected_trial_text,  # Only if we verified trial
-                'actual_trial_text': actual_trial_text,      # Only if we verified trial
-                'screenshot': result.get('data', {}).get('screenshot')
-            }
+            # Return verification result with granular checks
+            if verification_issues:
+                return {
+                    'verified': False,
+                    'message': '; '.join(verification_issues),
+                    'issues': verification_issues,
+                    'checks': checks
+                }
+            else:
+                return {
+                    'verified': True,
+                    'message': 'Stripe checkout page verified successfully',
+                    'checks': checks
+                }
         
         except requests.exceptions.Timeout:
             return {
