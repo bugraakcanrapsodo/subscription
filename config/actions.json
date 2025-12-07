@@ -65,6 +65,28 @@
       "expected_plan_code": 12
     }
   },
+  "purchase_lifetime_premium": {
+    "action_id": "purchase_lifetime_premium",
+    "action_name": "Purchase Lifetime Premium Membership",
+    "action_type": "purchase",
+    "description": "Purchase lifetime premium subscription. No trial period - always active immediately. Does not auto-renew.",
+    "parameters": {
+      "card_type": {
+        "description": "Test card to use (visa_success, card_declined, etc.)",
+        "required": true,
+        "default": "visa_success",
+        "reference": "See config/test_cards.json for all available cards"
+      }
+    },
+    "subscription_type": "lifetime",
+    "requires_ui": true,
+    "verification": {
+      "check_subscription_status": true,
+      "check_dates": true,
+      "check_trial_period": false,
+      "expected_plan_code": 3
+    }
+  },
   "cancel": {
     "action_id": "cancel",
     "action_name": "Cancel Subscription",

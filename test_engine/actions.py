@@ -103,7 +103,7 @@ class ActionExecutor:
         elif action_type == 'advance_time':
             return self._execute_advance_time_action(action_name, action_config, param, subscription_state)
         elif action_type == 'verify':
-            return self._execute_verify_action(action_name, action_config, param)
+            return self._execute_verify_action(action_name, action_config, param, subscription_state)
         elif action_type == 'refund':
             return self._execute_refund_action(action_name, action_config, param)
         # TODO: Implement upgrade, downgrade actions (must return subscription_type)
@@ -543,11 +543,15 @@ class ActionExecutor:
             else:
                 target_date_str = f"{days_to_advance} days from current simulated time"
             
+            # Get test name from subscription state
+            test_name = subscription_state.get('test_name', 'N/A') if subscription_state else 'N/A'
+            
             # Display manual intervention instructions
             print("\n" + "=" * 80)
             print("⏰ MANUAL TIME ADVANCEMENT REQUIRED")
             print("=" * 80)
             print(f"User Email: {user_email}")
+            print(f"Test Name: {test_name}")
             print(f"Days to Advance: {days_to_advance} days")
             print("\nINSTRUCTIONS:")
             print("1. Open Stripe Dashboard (Test Mode)")
@@ -599,7 +603,7 @@ class ActionExecutor:
                 'error': str(e)
             }
 
-    def _execute_verify_action(self, action_name: str, action_config: Dict[str, Any], param: str = None) -> Dict[str, Any]:
+    def _execute_verify_action(self, action_name: str, action_config: Dict[str, Any], param: str = None, subscription_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Execute manual verification step - pause and wait for tester input
 
@@ -611,6 +615,7 @@ class ActionExecutor:
             action_name: Name of the action (verify)
             action_config: Action configuration from actions.json
             param: Hint text to show the tester about what to verify
+            subscription_state: Current subscription state (contains test_name)
 
         Returns:
             Dict containing verification results with keys:
@@ -630,10 +635,14 @@ class ActionExecutor:
         # Get user information
         user_data = self.mlm_api.get_user_data()
         user_email = user_data.get('email', 'N/A')
+        
+        # Get test name from subscription state
+        test_name = subscription_state.get('test_name', 'N/A') if subscription_state else 'N/A'
 
         # Show user info and the hint
         print(f"\n👤 USER INFO:")
         print(f"   Email: {user_email}")
+        print(f"   Test Name: {test_name}")
 
         # Show the hint
         hint_text = param if param else "Verify the expected behavior manually"

@@ -218,7 +218,7 @@ class AdminSubscription(BaseModel):
     """Admin subscription details"""
     id: int
     userId: int
-    email: str
+    email: Optional[str] = None  # Some subscriptions may have None values
     type: int
     mlmVersion: int
     status: int
@@ -243,7 +243,7 @@ class GetAdminSubscriptionsResponse(BaseModel):
             AdminSubscription or None if not found
         """
         for sub in self.subscriptions:
-            if sub.email.lower() == email.lower():
+            if sub.email and sub.email.lower() == email.lower():
                 return sub
         return None
     
@@ -259,7 +259,7 @@ class GetAdminSubscriptionsResponse(BaseModel):
         Returns:
             List of AdminSubscription objects (may be empty)
         """
-        return [sub for sub in self.subscriptions if sub.email.lower() == email.lower()]
+        return [sub for sub in self.subscriptions if sub.email and sub.email.lower() == email.lower()]
     
     def get_subscriptions_by_user_id(self, user_id: int) -> List[AdminSubscription]:
         """

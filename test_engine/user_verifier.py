@@ -102,9 +102,9 @@ class UserVerifier:
         state_prev_expire_date = subscription_state.get('expire_date') if subscription_state else None
         
         # Get subscription config to determine expected status based on trial eligibility
-        # For cancel/reactivate/advance_time actions, use the subscription_type from previous purchase
+        # For cancel/refund/reactivate/advance_time actions, use the subscription_type from previous purchase
         # For purchase actions, get it from the action config
-        if action_type in ['cancel', 'reactivate', 'advance_time'] and subscription_type:
+        if action_type in ['cancel', 'refund', 'reactivate', 'advance_time'] and subscription_type:
             # Use subscription_type from previous purchase action
             subscription_config = self.subscriptions_config.get(subscription_type, {})
             self.logger.info(f"Using subscription_type from previous action: {subscription_type}")
@@ -113,7 +113,7 @@ class UserVerifier:
             subscription_type = self.actions_config[action_name].get('subscription_type')
             subscription_config = self.subscriptions_config.get(subscription_type, {})
         
-        # Calculate expected status and other information for cancel, reactivate, and advance_time actions
+        # Calculate expected status and other information for cancel, refund, reactivate, and advance_time actions
         status_result = self.expectations.calculate_expected_status(
             action_type=action_type,
             subscription_type=subscription_type,
@@ -188,7 +188,19 @@ class UserVerifier:
             status_codes = self.subscriptions_config.get('status_codes', {})
             
             if not subscriptions_response.has_active_subscription():
-                self.logger.info("No active subscription found (may be expected for free/cancelled users)")
+                self.logger.info("No active subscription found (may be expected for free/cancelled/refunded users)")
+                
+                # For refund actions, no active subscription is expected (refunds only show in Admin API)
+                if action_type == 'refund':
+                    self.logger.info("✓ Refund action: No active subscription is expected behavior")
+                    return {
+                        'verified': True,
+                        'message': 'No active subscription (expected for refunded users)',
+                        'expected_status_code': expected_status_code,
+                        'expected_status': expected_status,
+                        'actual_status': 'none (refunded subscription only visible in Admin API)'
+                    }
+                
                 return {
                     'verified': False,
                     'message': 'No active subscription found',
@@ -223,10 +235,18 @@ class UserVerifier:
             self.logger.info(f"  Expire Date: {latest_sub.expireDate}")
             
             verification_issues = []
+            checks = {}  # Granular verification results
             
             # Verify status code if specified
             if expected_status_code is not None:
-                if actual_status_code != expected_status_code:
+                status_passed = actual_status_code == expected_status_code
+                checks['status_code'] = {
+                    'passed': status_passed,
+                    'expected': expected_status_code,
+                    'actual': actual_status_code,
+                    'message': actual_status_name
+                }
+                if not status_passed:
                     verification_issues.append(
                         f"Status code mismatch: expected {expected_status_code} ({expected_status}), "
                         f"got {actual_status_code} ({actual_status_name})"
@@ -234,29 +254,70 @@ class UserVerifier:
             
             # Verify plan code if specified
             if expected_plan_code is not None:
-                if actual_plan_code != expected_plan_code:
+                plan_passed = actual_plan_code == expected_plan_code
+                checks['plan_code'] = {
+                    'passed': plan_passed,
+                    'expected': expected_plan_code,
+                    'actual': actual_plan_code,
+                    'message': f"Plan {actual_plan_code}"
+                }
+                if not plan_passed:
                     verification_issues.append(
                         f"Plan code mismatch: expected {expected_plan_code}, got {actual_plan_code}"
                     )
             
+            # Verify subscription type (always web = 2)
+            expected_type = 2
+            actual_type = latest_sub.type
+            type_passed = actual_type == expected_type
+            checks['subscription_type'] = {
+                'passed': type_passed,
+                'expected': expected_type,
+                'actual': actual_type,
+                'message': 'web' if actual_type == 2 else f'type {actual_type}'
+            }
+            if not type_passed:
+                verification_issues.append(
+                    f"Subscription type mismatch: expected {expected_type}, got {actual_type}"
+                )
+            
             # Verify trial period if this is a trial subscription
             if check_trial_period and trial_duration_days:
+                trial_passed = False
+                trial_message = ""
                 if actual_trial_period is None:
+                    trial_message = f"Expected {trial_duration_days} days but field missing"
                     verification_issues.append(
                         f"Expected trial subscription with {trial_duration_days} days, "
                         f"but trial_period_days field is missing from API response"
                     )
                 elif actual_trial_period != trial_duration_days:
+                    trial_message = f"Expected {trial_duration_days} days, got {actual_trial_period}"
                     verification_issues.append(
                         f"Trial period mismatch: expected {trial_duration_days} days, "
                         f"got {actual_trial_period} days from API"
                     )
                 else:
+                    trial_passed = True
+                    trial_message = f"{actual_trial_period} days"
                     self.logger.info(f"✓ Trial period field verified: {actual_trial_period} days")
+                
+                checks['trial_period'] = {
+                    'passed': trial_passed,
+                    'expected': trial_duration_days,
+                    'actual': actual_trial_period,
+                    'message': trial_message
+                }
             elif not check_trial_period and actual_trial_period is not None and actual_status_code != 4:
                 # This is supposed to be a non-trial subscription, but has trial_period_days
                 # Note: We skip this check for cancelled subscriptions (status=4) as they may retain
                 # the trial_period_days field from when they were originally created
+                checks['trial_period'] = {
+                    'passed': False,
+                    'expected': None,
+                    'actual': actual_trial_period,
+                    'message': f"Unexpected trial_period_days={actual_trial_period}"
+                }
                 verification_issues.append(
                     f"Expected non-trial subscription, but trial_period_days={actual_trial_period} "
                     f"found in API response"
@@ -283,7 +344,14 @@ class UserVerifier:
                     else:
                         # For initial purchase: check that start date is recent (within last hour)
                         time_since_start = (now - start_date).total_seconds()
-                        if time_since_start < 0 or time_since_start > 3600:
+                        start_passed = time_since_start >= 0 and time_since_start <= 3600
+                        checks['start_date'] = {
+                            'passed': start_passed,
+                            'expected': 'within last hour',
+                            'actual': latest_sub.startDate,
+                            'message': f'{int(time_since_start/60)} minutes ago' if time_since_start > 0 else 'in future'
+                        }
+                        if not start_passed:
                             verification_issues.append(
                                 f"Start date seems incorrect: {latest_sub.startDate} "
                                 f"(expected within last hour)"
@@ -294,10 +362,18 @@ class UserVerifier:
                         expected_expire = start_date + timedelta(days=trial_duration_days)
                         # Allow 1 day tolerance
                         days_diff = abs((expire_date - expected_expire).days)
-                        if days_diff > 1:
+                        trial_dates_passed = days_diff <= 1
+                        actual_days = (expire_date - start_date).days
+                        checks['trial_period_dates'] = {
+                            'passed': trial_dates_passed,
+                            'expected': f'{trial_duration_days} days',
+                            'actual': f'{actual_days} days',
+                            'message': f'~{actual_days} days from dates'
+                        }
+                        if not trial_dates_passed:
                             verification_issues.append(
                                 f"Trial period mismatch: expected {trial_duration_days} days, "
-                                f"but expire date is {(expire_date - start_date).days} days from start"
+                                f"but expire date is {actual_days} days from start"
                             )
                         else:
                             self.logger.info(f"✓ Trial period duration verified: ~{trial_duration_days} days from dates")
@@ -306,11 +382,11 @@ class UserVerifier:
                     verification_issues.append(f"Date parsing error: {str(date_error)}")
             
             # Get expected duration from subscription config
-            expected_duration_days = subscription_config.get('duration_days') if subscription_config else None
+            expected_duration_months = subscription_config.get('duration_months') if subscription_config else None
             
             # Calculate expected dates based on action type and cancellation state
             # This properly handles:
-            # - purchase/cancel/reactivate: expect actual dates
+            # - purchase/cancel/refund/reactivate: expect actual dates
             # - advance_time + cancelled: expect unchanged dates (won't renew)
             # - advance_time + not cancelled: calculate new dates if past expiration
             expected_start_date, expected_expire_date = self.expectations.calculate_expected_dates(
@@ -335,7 +411,14 @@ class UserVerifier:
 
                     # Compare start dates (allow 1 minute tolerance)
                     start_diff_seconds = abs((actual_start - expected_start).total_seconds())
-                    if start_diff_seconds > 60:
+                    start_passed = start_diff_seconds <= 60
+                    checks['start_date'] = {
+                        'passed': start_passed,
+                        'expected': expected_start_date,
+                        'actual': latest_sub.startDate,
+                        'message': f'matches expected' if start_passed else f'difference: {start_diff_seconds/60:.1f} minutes'
+                    }
+                    if not start_passed:
                         verification_issues.append(
                             f"Start date mismatch: {latest_sub.startDate} "
                             f"(expected: {expected_start_date}, difference: {start_diff_seconds/60:.1f} minutes)"
@@ -345,7 +428,14 @@ class UserVerifier:
 
                     # Compare expire dates (allow 1 minute tolerance)
                     expire_diff_seconds = abs((actual_expire - expected_expire).total_seconds())
-                    if expire_diff_seconds > 60:
+                    expire_passed = expire_diff_seconds <= 60
+                    checks['expire_date'] = {
+                        'passed': expire_passed,
+                        'expected': expected_expire_date,
+                        'actual': latest_sub.expireDate,
+                        'message': f'matches expected' if expire_passed else f'difference: {expire_diff_seconds/60:.1f} minutes'
+                    }
+                    if not expire_passed:
                         verification_issues.append(
                             f"Expire date mismatch: {latest_sub.expireDate} "
                             f"(expected: {expected_expire_date}, difference: {expire_diff_seconds/60:.1f} minutes)"
@@ -362,10 +452,11 @@ class UserVerifier:
                     'verified': False,
                     'message': '; '.join(verification_issues),
                     'issues': verification_issues,
+                    'checks': checks,  # Granular verification results
                     'expected_status_code': expected_status_code,
                     'expected_plan_code': expected_plan_code,
                     'expected_trial_period_days': trial_duration_days,  # For trial subscriptions
-                    'expected_duration_days': expected_duration_days,    # For non-trial subscriptions
+                    'expected_duration_months': expected_duration_months,    # For non-trial subscriptions
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'subscription': {
@@ -383,10 +474,11 @@ class UserVerifier:
                 return {
                     'verified': True,
                     'message': 'Subscription verified successfully',
+                    'checks': checks,  # Granular verification results
                     'expected_status_code': expected_status_code,
                     'expected_plan_code': expected_plan_code,
                     'expected_trial_period_days': trial_duration_days,  # For trial subscriptions
-                    'expected_duration_days': expected_duration_days,    # For non-trial subscriptions
+                    'expected_duration_months': expected_duration_months,    # For non-trial subscriptions
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'subscription': {

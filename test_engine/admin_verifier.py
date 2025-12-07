@@ -40,7 +40,7 @@ class AdminVerifier:
         user_email: str,
         expected_status_code: int = None,
         expected_plan_code: int = None,
-        expected_duration_days: int = None,
+        expected_duration_months: int = None,
         expected_trial_period_days: int = None,
         expected_start_date: str = None,
         expected_expire_date: str = None,
@@ -55,7 +55,7 @@ class AdminVerifier:
             user_email: User email to search for
             expected_status_code: Expected status code
             expected_plan_code: Expected plan code (not available in admin data)
-            expected_duration_days: Expected subscription duration in days
+            expected_duration_months: Expected subscription duration in months
             expected_trial_period_days: Expected trial period in days
             check_dates: Whether to verify dates
             
@@ -108,14 +108,36 @@ class AdminVerifier:
             self.logger.info(f"  Expire Date: {admin_sub.expireDate}")
 
             verification_issues = []
+            checks = {}  # Granular verification results
 
             # Verify status code if specified
             if expected_status_code is not None:
-                if actual_status_code != expected_status_code:
+                status_passed = actual_status_code == expected_status_code
+                checks['status_code'] = {
+                    'passed': status_passed,
+                    'expected': expected_status_code,
+                    'actual': actual_status_code,
+                    'message': actual_status_name
+                }
+                if not status_passed:
                     verification_issues.append(
                         f"Status code mismatch: expected {expected_status_code}, "
                         f"got {actual_status_code} ({actual_status_name})"
                     )
+            
+            # Verify subscription type (always web = 2)
+            expected_type = 2
+            type_passed = actual_type_code == expected_type
+            checks['subscription_type'] = {
+                'passed': type_passed,
+                'expected': expected_type,
+                'actual': actual_type_code,
+                'message': actual_type_name
+            }
+            if not type_passed:
+                verification_issues.append(
+                    f"Subscription type mismatch: expected {expected_type}, got {actual_type_code}"
+                )
 
             # Note: Admin endpoint doesn't have plan code, only user endpoint has it
             if expected_plan_code is not None:
@@ -167,23 +189,38 @@ class AdminVerifier:
                         if is_cancelled:
                             self.logger.info("Subscription is CANCELLED - dates should remain unchanged")
                             # No date validation needed - cancelled subscriptions don't renew
-                        elif state_prev_expire_date and state_days_advanced > 0:
-                            # Time advancement scenario - start date should match previous subscription's expire date
-                            expected_start = datetime.fromisoformat(state_prev_expire_date.replace('Z', '+00:00'))
+                        elif expected_start_date:
+                            # Time advancement scenario - use expected_start_date from user_verifier
+                            # This ensures both User API and Admin API use the SAME expected dates
+                            expected_start = datetime.fromisoformat(expected_start_date.replace('Z', '+00:00'))
                             time_diff = abs((start_date - expected_start).total_seconds())
-                            if time_diff > 60:  # Allow 1 minute tolerance
+                            start_passed = time_diff <= 60
+                            checks['start_date'] = {
+                                'passed': start_passed,
+                                'expected': expected_start_date,
+                                'actual': admin_sub.startDate,
+                                'message': f'matches expected' if start_passed else f'difference: {time_diff/60:.1f} minutes'
+                            }
+                            if not start_passed:
                                 verification_issues.append(
                                     f"Start date mismatch after time advance: {admin_sub.startDate} "
-                                    f"(expected: {state_prev_expire_date}, difference: {time_diff/60:.1f} minutes)"
+                                    f"(expected: {expected_start_date}, difference: {time_diff/60:.1f} minutes)"
                                 )
                             else:
-                                self.logger.info(f"  ✓ Start date matches previous expire date")
+                                self.logger.info(f"  ✓ Start date verified: matches expected")
                         else:
-                            self.logger.info(f"  Skipping start date check (time has been advanced or is being advanced)")
+                            self.logger.info(f"  Skipping start date check (expected_start_date not provided)")
                     else:
                         # For initial purchase: check that start date is recent (within last hour)
                         time_since_start = (now - start_date).total_seconds()
-                        if time_since_start < 0 or time_since_start > 3600:
+                        start_passed = time_since_start >= 0 and time_since_start <= 3600
+                        checks['start_date'] = {
+                            'passed': start_passed,
+                            'expected': 'within last hour',
+                            'actual': admin_sub.startDate,
+                            'message': f'{int(time_since_start/60)} minutes ago' if time_since_start > 0 else 'in future'
+                        }
+                        if not start_passed:
                             verification_issues.append(
                                 f"Start date seems incorrect: {admin_sub.startDate} "
                                 f"(expected within last hour)"
@@ -192,6 +229,25 @@ class AdminVerifier:
                     # Calculate duration
                     duration_days = (expire_date - start_date).days
                     self.logger.info(f"  Subscription duration: {duration_days} days")
+                    
+                    # Verify expire date if expected value provided
+                    if expected_expire_date:
+                        expected_expire_dt = datetime.fromisoformat(expected_expire_date.replace('Z', '+00:00'))
+                        expire_diff_seconds = abs((expire_date - expected_expire_dt).total_seconds())
+                        expire_passed = expire_diff_seconds <= 60
+                        checks['expire_date'] = {
+                            'passed': expire_passed,
+                            'expected': expected_expire_date,
+                            'actual': admin_sub.expireDate,
+                            'message': f'matches expected' if expire_passed else f'difference: {expire_diff_seconds/60:.1f} minutes'
+                        }
+                        if not expire_passed:
+                            verification_issues.append(
+                                f"Expire date mismatch: {admin_sub.expireDate} "
+                                f"(expected: {expected_expire_date}, difference: {expire_diff_seconds/60:.1f} minutes)"
+                            )
+                        else:
+                            self.logger.info(f"  ✓ Expire date verified: matches expected")
 
                 except Exception as date_error:
                     verification_issues.append(f"Date parsing error: {str(date_error)}")
@@ -206,9 +262,10 @@ class AdminVerifier:
                     'verified': False,
                     'message': '; '.join(verification_issues),
                     'issues': verification_issues,
+                    'checks': checks,  # Granular verification results
                     'expected_status_code': expected_status_code,
                     'expected_subscription_type': 2,  # Web type
-                    'expected_duration_days': expected_duration_days,
+                    'expected_duration_months': expected_duration_months,
                     'expected_trial_period_days': expected_trial_period_days,
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios
@@ -230,9 +287,10 @@ class AdminVerifier:
                 return {
                     'verified': True,
                     'message': 'Subscription verified in admin panel',
+                    'checks': checks,  # Granular verification results
                     'expected_status_code': expected_status_code,
                     'expected_subscription_type': 2,  # Web type
-                    'expected_duration_days': expected_duration_days,
+                    'expected_duration_months': expected_duration_months,
                     'expected_trial_period_days': expected_trial_period_days,
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios

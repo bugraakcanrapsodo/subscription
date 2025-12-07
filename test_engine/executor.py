@@ -226,9 +226,10 @@ class TestExecutor:
             # Track subscription state across all actions
             # This is needed for verification of cancel/reactivate/advance_time
             subscription_state = {
+                'test_name': test_name,  # Test name for display in manual steps
                 'subscription_type': None,  # e.g., '1y_premium', '2y_premium'
                 'plan_code': None,  # e.g., 1 (from subscription config)
-                'duration_days': None,  # e.g., 365, 730 (from subscription config)
+                'duration_months': None,  # e.g., 12, 24, 120 (from subscription config)
                 'status_code': None,  # e.g., 1=active, 3=trial, 4=cancelled
                 'start_date': None,  # ISO format
                 'expire_date': None,  # ISO format
@@ -257,18 +258,43 @@ class TestExecutor:
                         'message': action_result.get('message'),
                         'details': action_result
                     })
+                    
+                    # Extract checkout_verification from action result and add to verification_results
+                    checkout_verification = action_result.get('checkout_verification')
+                    if checkout_verification:
+                        checkout_verify_result = {
+                            'verified': checkout_verification.get('verified'),
+                            'message': checkout_verification.get('message'),
+                            'checks': checkout_verification.get('checks', {}),
+                            'action_name': action_name,
+                            'verification_type': 'stripe_checkout',
+                            'checkout_details': checkout_verification.get('checkout_details'),
+                            'expected_price': checkout_verification.get('expected_price'),
+                            'actual_price': checkout_verification.get('actual_price'),
+                            'expected_currency': checkout_verification.get('expected_currency'),
+                            'actual_currency': checkout_verification.get('actual_currency'),
+                            'expected_product_name': checkout_verification.get('expected_product_name'),
+                            'actual_product_name': checkout_verification.get('actual_product_name'),
+                            'expected_trial_text': checkout_verification.get('expected_trial_text'),
+                            'actual_trial_text': checkout_verification.get('actual_trial_text'),
+                            'screenshot': checkout_verification.get('screenshot')
+                        }
+                        if checkout_verification.get('issues'):
+                            checkout_verify_result['issues'] = checkout_verification.get('issues')
+                        
+                        result['verification_results'].append(checkout_verify_result)
 
                     action_type = self.action_executor.actions_config[action_name].get('action_type')
 
                     # Update subscription state from action results
                     if action_result.get('success'):
                         # Track subscription_type from purchase/upgrade/downgrade actions
-                        # Also extract plan_code and duration_days from subscription config
+                        # Also extract plan_code and duration_months from subscription config
                         if action_result.get('subscription_type'):
                             subscription_type = action_result.get('subscription_type')
                             subscription_state['subscription_type'] = subscription_type
 
-                            # Load subscription config to get plan_code and duration_days
+                            # Load subscription config to get plan_code and duration_months
                             from pathlib import Path
                             import json
                             config_path = Path(__file__).parent.parent / 'config' / 'subscriptions.json'
@@ -277,9 +303,9 @@ class TestExecutor:
 
                             sub_config = subscriptions_config.get(subscription_type, {})
                             subscription_state['plan_code'] = sub_config.get('code')
-                            subscription_state['duration_days'] = sub_config.get('duration_days')
+                            subscription_state['duration_months'] = sub_config.get('duration_months')
 
-                            self.logger.info(f"Updated subscription metadata: type={subscription_type}, plan_code={subscription_state['plan_code']}, duration_days={subscription_state['duration_days']}")
+                            self.logger.info(f"Updated subscription metadata: type={subscription_type}, plan_code={subscription_state['plan_code']}, duration_months={subscription_state['duration_months']}")
 
                         # Track cancel status
                         if action_type == 'cancel':
@@ -403,7 +429,7 @@ class TestExecutor:
                             # Use the SAME expected values to ensure consistency
                             expected_status_code = verify_result.get('expected_status_code')
                             expected_plan_code = verify_result.get('expected_plan_code')
-                            expected_duration_days = verify_result.get('expected_duration_days')
+                            expected_duration_months = verify_result.get('expected_duration_months')
                             expected_trial_period_days = verify_result.get('expected_trial_period_days')
                             expected_start_date = verify_result.get('expected_start_date')
                             expected_expire_date = verify_result.get('expected_expire_date')
@@ -413,17 +439,17 @@ class TestExecutor:
                                 user_email=user_email,
                                 expected_status_code=expected_status_code,
                                 expected_plan_code=expected_plan_code,
-                                expected_duration_days=expected_duration_days,
+                                expected_duration_months=expected_duration_months,
                                 expected_trial_period_days=expected_trial_period_days,
                                 expected_start_date=expected_start_date,
                                 expected_expire_date=expected_expire_date,
+                                check_dates=True,  # Enable date verification in admin API
                                 subscription_state=subscription_state,
                                 action_type=action_type
                             )
                             # Add action context to verification result
                             admin_verify_result['action_name'] = action_name
                             admin_verify_result['verification_type'] = 'admin_api'
-                            admin_verify_result['is_non_blocking'] = True  # Admin API failures are warnings only
                             result['verification_results'].append(admin_verify_result)
 
                             if not admin_verify_result.get('verified'):
