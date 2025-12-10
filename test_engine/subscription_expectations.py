@@ -4,11 +4,12 @@ Centralized logic for calculating expected subscription states, dates, and statu
 """
 
 import json
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from base.logger import Logger
+from models.types import SubscriptionState
 
 
 class SubscriptionExpectations:
@@ -43,7 +44,7 @@ class SubscriptionExpectations:
         self,
         action_type: str,
         subscription_type: str,
-        subscription_state: Dict[str, Any] = None,
+        subscription_state: Optional[SubscriptionState] = None,
         subscription_config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
@@ -110,7 +111,7 @@ class SubscriptionExpectations:
     def calculate_expected_dates(
         self,
         action_type: str,
-        subscription_state: Dict[str, Any],
+        subscription_state: Optional[SubscriptionState],
         actual_start_date: str,
         actual_expire_date: str,
         subscription_config: Dict[str, Any]
@@ -137,8 +138,8 @@ class SubscriptionExpectations:
         
         # For advance_time: calculate based on cancellation state
         if action_type == 'advance_time':
-            is_cancelled = subscription_state.get('is_cancelled', False) if subscription_state else False
-            days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+            is_cancelled = subscription_state.is_cancelled if subscription_state else False
+            days_advanced = subscription_state.days_advanced if subscription_state else 0
             duration_months = subscription_config.get('duration_months', 12) if subscription_config else 12
             
             self.logger.info(f"Calculating expected dates for advance_time:")
@@ -156,8 +157,8 @@ class SubscriptionExpectations:
             # The API returns the RENEWED subscription's dates after auto-renewal
             try:
                 # Get ORIGINAL dates from subscription_state (stored at purchase time)
-                original_start_str = subscription_state.get('start_date') if subscription_state else None
-                original_expire_str = subscription_state.get('expire_date') if subscription_state else None
+                original_start_str = subscription_state.start_date if subscription_state else None
+                original_expire_str = subscription_state.expire_date if subscription_state else None
 
                 if not original_start_str or not original_expire_str:
                     self.logger.warning("  Missing original dates in subscription_state, using actual dates")
@@ -276,7 +277,7 @@ class SubscriptionExpectations:
     
     def _calculate_status_after_time_advance(
         self,
-        subscription_state: Dict[str, Any],
+        subscription_state: Optional[SubscriptionState],
         subscription_config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
@@ -289,18 +290,27 @@ class SubscriptionExpectations:
         Returns:
             Dict with expected_status_code, expected_status_name, check_trial_period, trial_duration_days
         """
-        days_advanced = subscription_state.get('days_advanced', 0)
-        current_status = subscription_state.get('status_code')
-        is_cancelled = subscription_state.get('is_cancelled', False)
-        trial_period_days = subscription_state.get('trial_period_days')
+        if not subscription_state:
+            # Fallback if no state provided
+            return {
+                'expected_status_code': 1,
+                'expected_status_name': 'active',
+                'check_trial_period': False,
+                'trial_duration_days': None
+            }
+        
+        days_advanced = subscription_state.days_advanced
+        current_status = subscription_state.status_code
+        is_cancelled = subscription_state.is_cancelled
+        trial_period_days = subscription_state.trial_period_days
         
         self.logger.info(f"Calculating expected status after {days_advanced} days advancement")
         self.logger.info(f"  Current: status={current_status}, cancelled={is_cancelled}, trial_days={trial_period_days}")
         
         try:
-            if subscription_state.get('start_date') and subscription_state.get('expire_date'):
-                start_date = datetime.fromisoformat(subscription_state['start_date'].replace('Z', '+00:00'))
-                expire_date = datetime.fromisoformat(subscription_state['expire_date'].replace('Z', '+00:00'))
+            if subscription_state.start_date and subscription_state.expire_date:
+                start_date = datetime.fromisoformat(subscription_state.start_date.replace('Z', '+00:00'))
+                expire_date = datetime.fromisoformat(subscription_state.expire_date.replace('Z', '+00:00'))
                 simulated_now = start_date + timedelta(days=days_advanced)
                 
                 if simulated_now >= expire_date:

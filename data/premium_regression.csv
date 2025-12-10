@@ -1,16 +1,16 @@
 test_id,test_name,test_tag,country,trial_status,action_1,param_1,action_2,param_2,action_3,param_3,action_4,param_4
-TC01,User purchases 1-Year Premium Subscription,,us,Active,purchase_1y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
-TC02,User purchases 2-Year Premium Subscription,,us,Active,purchase_2y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
-TC03,User purchases 1-Year Premium Subscription (No Trial),,us,None,purchase_1y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
-TC04,User purchases 2-Year Premium Subscription (No Trial),,us,None,purchase_2y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
+TC01,User purchases 1-Year Premium Subscription,smoke,us,Active,purchase_1y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
+TC02,User purchases 2-Year Premium Subscription,smoke,us,Active,purchase_2y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
+TC03,User purchases 1-Year Premium Subscription (No Trial),smoke,us,None,purchase_1y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
+TC04,User purchases 2-Year Premium Subscription (No Trial),smoke,us,None,purchase_2y_premium,visa_success,verify,User should access premium features - MLM2PRO app and PC App,,,,
 TC05,User purchases Lifetime Premium Subscription,,us,None,purchase_lifetime,visa_success,verify,User should access lifetime features - MLM2PRO app and PC App,,,,
-TC06,User purchases 1-Year Premium Subscription with Different Currency,,ca,None,purchase_1y_premium,visa_success,verify,User should access premium features - verify CAD currency in Stripe,,,,
-TC07,User purchases 2-Year Premium Subscription with Different Currency,failed,au,None,purchase_2y_premium,visa_success,verify,User should access premium features - verify AUD currency in Stripe,,,,
+TC06,User purchases 1-Year Premium Subscription with Different Currency,smoke,ca,None,purchase_1y_premium,visa_success,verify,User should access premium features - verify CAD currency in Stripe,,,,
+TC07,User purchases 2-Year Premium Subscription with Different Currency,smoke,au,None,purchase_2y_premium,visa_success,verify,User should access premium features - verify AUD currency in Stripe,,,,
 TC08,User purchases Lifetime Premium Subscription with Different Currency,,eu,None,purchase_lifetime,visa_success,verify,User should access premium features - verify EUR currency in Stripe,,,,
-TC09,User purchases 1-Year Premium Subscription then Requests Refund,,us,None,purchase_1y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
-TC10,User purchases 1-Year Premium Subscription then Requests Refund (SGD),failed,sg,None,purchase_1y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
-TC11,User purchases 2-Year Premium Subscription then Requests Refund,,us,None,purchase_2y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
-TC12,User purchases 2-Year Premium Subscription then Requests Refund (JPY),failed:refund,jp,None,purchase_2y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
+TC09,User purchases 1-Year Premium Subscription then Requests Refund,smoke,us,None,purchase_1y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
+TC10,User purchases 1-Year Premium Subscription then Requests Refund (SGD),smoke,sg,None,purchase_1y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
+TC11,User purchases 2-Year Premium Subscription then Requests Refund,smoke,us,None,purchase_2y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
+TC12,User purchases 2-Year Premium Subscription then Requests Refund (JPY),smoke,jp,None,purchase_2y_premium,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
 TC13,User Purchases Lifetime Premium Subscription then Requests Refund,,us,None,purchase_lifetime,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
 TC14,User Purchases Lifetime Premium Subscription then Requests Refund (GBP),,gb,None,purchase_lifetime,visa_success,refund,,verify,User should receive refund and lose premium access - Free Member,,
 TC15,User Purchases 1-Year Subscription and 1-Year Subscription Auto-Renew,,us,None,purchase_1y_premium,visa_success,advance_time,366,verify,After 1-year ends payment charged automatically and 1 year membership renewed,,
@@ -21,4 +21,4 @@ TC19,User Purchases 1-Year Subscription and Cancels Auto-Renew,failed,us,None,pu
 TC20,User Purchases 2-Year Premium Subscription and Cancels Auto-Renew,,us,None,purchase_2y_premium,visa_success,cancel,,advance_time,731,verify,At end of 2-year no payment taken - user loses premium access
 TC21,User Purchases 1-Year Subscription with Trial and Cancels Auto-Renew,,us,Active,purchase_1y_premium,visa_success,cancel,,advance_time,46,verify,At end of trial no payment taken - user loses premium access
 TC22,User Purchases 2-Year Premium Subscription with Trial and Cancels Auto-Renew,,us,Active,purchase_2y_premium,visa_success,cancel,,advance_time,46,verify,At end of trial no payment taken - user loses premium access
-,,
+TC23,User Purchases 1-Year Subscription with Trial with a declined card,smoke,us,Active,purchase_1y_premium,card_declined,verify,User should be free user

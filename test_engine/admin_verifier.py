@@ -12,6 +12,8 @@ from base.logger import Logger
 from api.mlm_api import MlmAPI
 from models.subscription import GetAdminSubscriptionsResponse, AdminSubscription
 from test_engine.subscription_expectations import SubscriptionExpectations
+from test_engine.subscription_state_manager import SubscriptionStateManager
+from models.types import VerificationType, SubscriptionState, ExpectedPaymentResult
 
 
 
@@ -34,6 +36,8 @@ class AdminVerifier:
         subscriptions_path = Path(__file__).parent.parent / 'config' / 'subscriptions.json'
         with open(subscriptions_path, 'r') as f:
             self.subscriptions_config = json.load(f)
+        
+        self.state_manager = SubscriptionStateManager(mlm_api)
     
     def verify_from_admin_api(
         self,
@@ -45,8 +49,10 @@ class AdminVerifier:
         expected_start_date: str = None,
         expected_expire_date: str = None,
         check_dates: bool = False,
-        subscription_state: Dict[str, Any] = None,
-        action_type: str = None
+        subscription_state: Optional[SubscriptionState] = None,
+        action_type: str = None,
+        subscription_state_snapshot: Optional[SubscriptionState] = None,
+        expected_result: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Verify subscription via Admin API
@@ -58,11 +64,34 @@ class AdminVerifier:
             expected_duration_months: Expected subscription duration in months
             expected_trial_period_days: Expected trial period in days
             check_dates: Whether to verify dates
+            subscription_state: Current subscription state
+            action_type: Type of action being verified
+            subscription_state_snapshot: State snapshot before action (for declined card verification)
             
         Returns:
             Verification result dictionary
         """
         try:
+            # Check if this is a declined card from action result
+            # Admin verifier is called from executor which passes snapshot if available
+            if expected_result == ExpectedPaymentResult.DECLINED.value and subscription_state_snapshot:
+                self.logger.info("Verifying declined card in admin - subscription state should be unchanged")
+                # Get current state from API
+                current_state = self.state_manager.get_current_state()
+                # Compare with snapshot
+                comparison_result = self.state_manager.verify_states_are_same(
+                    subscription_state_snapshot,
+                    current_state
+                )
+                return {
+                    'verified': comparison_result['verified'],
+                    'message': comparison_result['message'],
+                    'checks': comparison_result['checks'],
+                    'differences': comparison_result.get('differences', []),
+                    'verification_type': VerificationType.ADMIN_API.value,
+                    'admin_subscription': None
+                }
+            
             self.logger.info(f"Verifying subscription in admin panel for: {user_email}")
 
             # Get admin subscriptions - accept first valid response (even if empty)
@@ -82,7 +111,7 @@ class AdminVerifier:
                 }
 
             # Select the correct subscription based on simulated time
-            state_days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+            state_days_advanced = subscription_state.days_advanced if subscription_state else 0
             admin_sub = self._select_admin_subscription_at_simulated_time(
                 all_subscriptions=all_admin_subs,
                 state_days_advanced=state_days_advanced
@@ -179,9 +208,9 @@ class AdminVerifier:
                     self.logger.info(f"  Now: {now}")
 
                     # Check start date validity
-                    state_days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
-                    state_prev_expire_date = subscription_state.get('expire_date') if subscription_state else None
-                    is_cancelled = subscription_state.get('is_cancelled', False) if subscription_state else False
+                    state_days_advanced = subscription_state.days_advanced if subscription_state else 0
+                    state_prev_expire_date = subscription_state.expire_date if subscription_state else None
+                    is_cancelled = subscription_state.is_cancelled if subscription_state else False
 
                     # Skip "within last hour" check if time has been advanced OR if current action is advance_time
                     if action_type == 'advance_time' or state_days_advanced > 0:
