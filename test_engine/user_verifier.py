@@ -5,12 +5,14 @@ Verifies subscription status and expected results after actions from user perspe
 
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from base.logger import Logger
 from api.mlm_api import MlmAPI
 from test_engine.subscription_expectations import SubscriptionExpectations
+from test_engine.subscription_state_manager import SubscriptionStateManager
+from models.types import VerificationType, SubscriptionState, ExpectedPaymentResult
 
 
 
@@ -42,6 +44,7 @@ class UserVerifier:
             self.subscriptions_config = json.load(f)
 
         self.expectations = SubscriptionExpectations(trial_eligible=trial_eligible)
+        self.state_manager = SubscriptionStateManager(mlm_api)
 
 
     
@@ -49,7 +52,8 @@ class UserVerifier:
         self, 
         action_name: str, 
         action_result: Dict[str, Any],
-        subscription_state: Dict[str, Any] = None
+        subscription_state: Optional[SubscriptionState] = None,
+        subscription_state_snapshot: Optional[SubscriptionState] = None
     ) -> Dict[str, Any]:
         """
         Verify the result of an action matches expectations
@@ -57,14 +61,34 @@ class UserVerifier:
         Args:
             action_name: Name of the action executed
             action_result: Result from action execution
-            subscription_state: Current subscription state tracking dict (includes subscription_type, 
-                              status, dates, is_cancelled, days_advanced)
+            subscription_state: Current subscription state
+            subscription_state_snapshot: State snapshot before action (for declined card verification)
             
         Returns:
             Verification result dictionary
         """
-        # Extract subscription_type from state for backward compatibility
-        subscription_type = subscription_state.get('subscription_type') if subscription_state else None
+        # Check if this is a declined card - verify state unchanged
+        expected_result = action_result.get('expected_result')
+        if expected_result == ExpectedPaymentResult.DECLINED.value and subscription_state_snapshot:
+            self.logger.info("Verifying declined card - subscription state should be unchanged")
+            # Get current state from API
+            current_state = self.state_manager.get_current_state()
+            # Compare with snapshot
+            comparison_result = self.state_manager.verify_states_are_same(
+                subscription_state_snapshot,
+                current_state
+            )
+            return {
+                'verified': comparison_result['verified'],
+                'message': comparison_result['message'],
+                'checks': comparison_result['checks'],
+                'differences': comparison_result.get('differences', []),
+                'verification_type': VerificationType.USER_API.value,
+                'action_name': action_name
+            }
+        
+        # Extract subscription_type from state
+        subscription_type = subscription_state.subscription_type if subscription_state else None
         self.logger.info(f"Verifying action result: {action_name}")
         
         # Check if action exists
@@ -98,8 +122,8 @@ class UserVerifier:
         action_type = action_config.get('action_type')
         
         # Extract commonly used state values with defaults for safer access throughout the function
-        state_days_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
-        state_prev_expire_date = subscription_state.get('expire_date') if subscription_state else None
+        state_days_advanced = subscription_state.days_advanced if subscription_state else 0
+        state_prev_expire_date = subscription_state.expire_date if subscription_state else None
         
         # Get subscription config to determine expected status based on trial eligibility
         # For cancel/refund/reactivate/advance_time actions, use the subscription_type from previous purchase
@@ -157,7 +181,7 @@ class UserVerifier:
         action_type: str = None,
         state_days_advanced: int = 0,
         state_prev_expire_date: str = None,
-        subscription_state: Dict[str, Any] = None
+        subscription_state: Optional[SubscriptionState] = None
     ) -> Dict[str, Any]:
         """
         Verify subscription status via MLM API
@@ -180,14 +204,10 @@ class UserVerifier:
         try:
             self.logger.info("Fetching subscription status from API...")
             
-            # Get subscriptions - accept first valid response (even if empty)
-            # Empty response is valid (e.g., for free users or cancelled subscriptions)
-            subscriptions_response = self.mlm_api.get_subscriptions()
+            # Get current subscription state (with time-aware selection if days_advanced > 0)
+            current_state = self.state_manager.get_current_state(days_advanced=state_days_advanced)
             
-            # Get status code mapping
-            status_codes = self.subscriptions_config.get('status_codes', {})
-            
-            if not subscriptions_response.has_active_subscription():
+            if not current_state.exists:
                 self.logger.info("No active subscription found (may be expected for free/cancelled/refunded users)")
                 
                 # For refund actions, no active subscription is expected (refunds only show in Admin API)
@@ -209,30 +229,20 @@ class UserVerifier:
                     'actual_status': 'none'
                 }
             
-            # Get the correct subscription based on simulated time (for advance_time actions)
-            # or the latest subscription (for regular actions)
-            latest_sub = self._select_subscription_at_simulated_time(
-                subscriptions_response=subscriptions_response,
-                state_days_advanced=state_days_advanced
-            )
-            
-            actual_plan_code = latest_sub.data.package.code
-            actual_status_code = latest_sub.status
-            actual_status_name = status_codes.get(str(actual_status_code), 'unknown')
-            
-            # Check if trial_period_days exists (it's a string in the API response)
-            actual_trial_period = getattr(latest_sub.data.package, 'trial_period_days', None)
-            if actual_trial_period:
-                actual_trial_period = int(actual_trial_period)  # Convert string to int
+            # Extract values from current state
+            actual_plan_code = current_state.plan_code
+            actual_status_code = current_state.status_code
+            actual_status_name = current_state.status_name
+            actual_trial_period = current_state.trial_period_days
             
             self.logger.info(f"Found subscription:")
-            self.logger.info(f"  ID: {latest_sub.id}")
-            self.logger.info(f"  Type: {latest_sub.type}")
+            self.logger.info(f"  ID: {current_state.subscription_id}")
+            self.logger.info(f"  Type Code: {current_state.subscription_type_code}")
             self.logger.info(f"  Status Code: {actual_status_code} ({actual_status_name})")
             self.logger.info(f"  Plan Code: {actual_plan_code}")
             self.logger.info(f"  Trial Period Days: {actual_trial_period if actual_trial_period else 'N/A'}")
-            self.logger.info(f"  Start Date: {latest_sub.startDate}")
-            self.logger.info(f"  Expire Date: {latest_sub.expireDate}")
+            self.logger.info(f"  Start Date: {current_state.start_date}")
+            self.logger.info(f"  Expire Date: {current_state.expire_date}")
             
             verification_issues = []
             checks = {}  # Granular verification results
@@ -268,7 +278,7 @@ class UserVerifier:
             
             # Verify subscription type (always web = 2)
             expected_type = 2
-            actual_type = latest_sub.type
+            actual_type = current_state.subscription_type_code
             type_passed = actual_type == expected_type
             checks['subscription_type'] = {
                 'passed': type_passed,
@@ -326,8 +336,8 @@ class UserVerifier:
             # Verify dates if requested
             if check_dates:
                 try:
-                    start_date = datetime.fromisoformat(latest_sub.startDate.replace('Z', '+00:00'))
-                    expire_date = datetime.fromisoformat(latest_sub.expireDate.replace('Z', '+00:00'))
+                    start_date = datetime.fromisoformat(current_state.start_date.replace('Z', '+00:00'))
+                    expire_date = datetime.fromisoformat(current_state.expire_date.replace('Z', '+00:00'))
                     now = datetime.now(start_date.tzinfo)
                     
                     self.logger.info(f"Date verification:")
@@ -348,12 +358,12 @@ class UserVerifier:
                         checks['start_date'] = {
                             'passed': start_passed,
                             'expected': 'within last hour',
-                            'actual': latest_sub.startDate,
+                            'actual': current_state.start_date,
                             'message': f'{int(time_since_start/60)} minutes ago' if time_since_start > 0 else 'in future'
                         }
                         if not start_passed:
                             verification_issues.append(
-                                f"Start date seems incorrect: {latest_sub.startDate} "
+                                f"Start date seems incorrect: {current_state.start_date} "
                                 f"(expected within last hour)"
                             )
                     
@@ -392,8 +402,8 @@ class UserVerifier:
             expected_start_date, expected_expire_date = self.expectations.calculate_expected_dates(
                 action_type=action_type,
                 subscription_state=subscription_state,
-                actual_start_date=latest_sub.startDate,
-                actual_expire_date=latest_sub.expireDate,
+                actual_start_date=current_state.start_date,
+                actual_expire_date=current_state.expire_date,
                 subscription_config=subscription_config
             )
             
@@ -404,8 +414,8 @@ class UserVerifier:
             # Verify the calculated expected dates against actual dates
             if expected_start_date and expected_expire_date and (action_type == 'advance_time' or state_days_advanced > 0):
                 try:
-                    actual_start = datetime.fromisoformat(latest_sub.startDate.replace('Z', '+00:00'))
-                    actual_expire = datetime.fromisoformat(latest_sub.expireDate.replace('Z', '+00:00'))
+                    actual_start = datetime.fromisoformat(current_state.start_date.replace('Z', '+00:00'))
+                    actual_expire = datetime.fromisoformat(current_state.expire_date.replace('Z', '+00:00'))
                     expected_start = datetime.fromisoformat(expected_start_date.replace('Z', '+00:00'))
                     expected_expire = datetime.fromisoformat(expected_expire_date.replace('Z', '+00:00'))
 
@@ -415,12 +425,12 @@ class UserVerifier:
                     checks['start_date'] = {
                         'passed': start_passed,
                         'expected': expected_start_date,
-                        'actual': latest_sub.startDate,
+                        'actual': current_state.start_date,
                         'message': f'matches expected' if start_passed else f'difference: {start_diff_seconds/60:.1f} minutes'
                     }
                     if not start_passed:
                         verification_issues.append(
-                            f"Start date mismatch: {latest_sub.startDate} "
+                            f"Start date mismatch: {current_state.start_date} "
                             f"(expected: {expected_start_date}, difference: {start_diff_seconds/60:.1f} minutes)"
                         )
                     else:
@@ -432,12 +442,12 @@ class UserVerifier:
                     checks['expire_date'] = {
                         'passed': expire_passed,
                         'expected': expected_expire_date,
-                        'actual': latest_sub.expireDate,
+                        'actual': current_state.expire_date,
                         'message': f'matches expected' if expire_passed else f'difference: {expire_diff_seconds/60:.1f} minutes'
                     }
                     if not expire_passed:
                         verification_issues.append(
-                            f"Expire date mismatch: {latest_sub.expireDate} "
+                            f"Expire date mismatch: {current_state.expire_date} "
                             f"(expected: {expected_expire_date}, difference: {expire_diff_seconds/60:.1f} minutes)"
                         )
                     else:
@@ -460,14 +470,14 @@ class UserVerifier:
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'subscription': {
-                        'id': latest_sub.id,
-                        'type': latest_sub.type,
+                        'id': current_state.subscription_id,
+                        'type': current_state.subscription_type_code,
                         'status_code': actual_status_code,
                         'status_name': actual_status_name,
                         'plan_code': actual_plan_code,
                         'trial_period_days': actual_trial_period,
-                        'start_date': latest_sub.startDate,
-                        'expire_date': latest_sub.expireDate
+                        'start_date': current_state.start_date,
+                        'expire_date': current_state.expire_date
                     }
                 }
             else:
@@ -482,14 +492,14 @@ class UserVerifier:
                     'expected_start_date': expected_start_date,  # For time advancement scenarios
                     'expected_expire_date': expected_expire_date,  # For time advancement scenarios
                     'subscription': {
-                        'id': latest_sub.id,
-                        'type': latest_sub.type,
+                        'id': current_state.subscription_id,
+                        'type': current_state.subscription_type_code,
                         'status_code': actual_status_code,
                         'status_name': actual_status_name,
                         'plan_code': actual_plan_code,
                         'trial_period_days': actual_trial_period,
-                        'start_date': latest_sub.startDate,
-                        'expire_date': latest_sub.expireDate
+                        'start_date': current_state.start_date,
+                        'expire_date': current_state.expire_date
                     }
                 }
         
@@ -500,73 +510,3 @@ class UserVerifier:
                 'message': f'Verification error: {str(e)}',
                 'error': str(e)
             }
-    
-
-    def _select_subscription_at_simulated_time(
-        self,
-        subscriptions_response: Any,
-        state_days_advanced: int = 0
-    ) -> Any:
-        """
-        Select the correct subscription based on simulated time
-        
-        When time is advanced, the API returns multiple subscriptions (past and current).
-        We need to select the subscription that is "active" at the simulated current time.
-        
-        Logic:
-        1. If no time advancement (days_advanced=0), return latest subscription
-        2. If time advanced, calculate simulated_now and find subscription where:
-           start_date <= simulated_now <= expire_date
-        
-        Args:
-            subscriptions_response: Response from get_subscriptions API
-            state_days_advanced: Total days advanced via advance_time actions
-            
-        Returns:
-            The subscription that is active at the simulated time
-        """
-        from datetime import datetime
-        
-        all_subs = subscriptions_response.subscriptions
-        
-        # If no time advancement, use default behavior (latest subscription)
-        if state_days_advanced == 0 or len(all_subs) == 1:
-            return subscriptions_response.get_latest_subscription()
-        
-        # Time has been advanced - need to find the subscription active at simulated time
-        self.logger.info(f"Time advanced by {state_days_advanced} days, selecting subscription at simulated time")
-        self.logger.info(f"Found {len(all_subs)} subscription(s) in API response")
-        
-        try:
-            # Get the FIRST (original) subscription's start date as reference
-            # Note: API returns subscriptions in order, first is oldest
-            original_sub = all_subs[-1]  # Last in list is the oldest
-            original_start = datetime.fromisoformat(original_sub.startDate.replace('Z', '+00:00'))
-            
-            # Calculate simulated current time
-            simulated_now = original_start + timedelta(days=state_days_advanced)
-            
-            self.logger.info(f"Original start date: {original_start}")
-            self.logger.info(f"Simulated current time: {simulated_now}")
-            
-            # Find the subscription that contains simulated_now
-            for i, sub in enumerate(all_subs):
-                start_date = datetime.fromisoformat(sub.startDate.replace('Z', '+00:00'))
-                expire_date = datetime.fromisoformat(sub.expireDate.replace('Z', '+00:00'))
-                
-                self.logger.info(f"  Sub {i+1} (ID: {sub.id}): {start_date} to {expire_date}")
-                
-                # Check if simulated_now falls within this subscription period
-                if start_date <= simulated_now <= expire_date:
-                    self.logger.info(f"  ✓ Selected subscription ID {sub.id} (active at simulated time)")
-                    return sub
-            
-            # If no subscription contains simulated_now, it might be expired
-            # Return the latest subscription
-            self.logger.warning(f"No subscription contains simulated time, using latest")
-            return subscriptions_response.get_latest_subscription()
-        
-        except Exception as e:
-            self.logger.error(f"Error selecting subscription at simulated time: {e}")
-            return subscriptions_response.get_latest_subscription()
-

@@ -15,7 +15,10 @@ from test_engine.user_verifier import UserVerifier
 from test_engine.admin_verifier import AdminVerifier
 from test_engine.reporter import Reporter
 from test_engine.location_manager import LocationManager
+from test_engine.subscription_state_manager import SubscriptionStateManager
+from models.types import CleanupMode, SubscriptionState
 import json
+import copy
 
 
 class TestExecutor:
@@ -39,25 +42,27 @@ class TestExecutor:
         """
         self.mlm_api = mlm_api
         self.playwright_service_url = playwright_service_url
-        self.cleanup_users = cleanup_users
         self.logger = Logger(__name__)
 
-        # Validate cleanup mode
-        valid_modes = ["never", "passed", "always"]
-        if self.cleanup_users not in valid_modes:
+        # Validate and set cleanup mode using enum
+        try:
+            self.cleanup_mode = CleanupMode(cleanup_users)
+        except ValueError:
+            valid_modes = [mode.value for mode in CleanupMode]
             self.logger.warning(
-                f"Invalid cleanup mode '{self.cleanup_users}', defaulting to 'passed'. "
+                f"Invalid cleanup mode '{cleanup_users}', defaulting to 'passed'. "
                 f"Valid modes: {valid_modes}"
             )
-            self.cleanup_users = "passed"
+            self.cleanup_mode = CleanupMode.PASSED
 
         # Log cleanup mode
-        self.logger.info(f"User cleanup mode: {self.cleanup_users}")
+        self.logger.info(f"User cleanup mode: {self.cleanup_mode.value}")
 
         # Initialize components (will be re-initialized per test with location and trial status)
         self.action_executor = None  # Will be initialized per test
         self.user_verifier = None  # Will be initialized per test
         self.admin_verifier = None  # Will be initialized per test
+        self.state_manager = SubscriptionStateManager(mlm_api)  # Initialize state manager
         self.reporter = Reporter()
         self.location_manager = LocationManager()  # Initialize location manager
         self.admin_logged_in = False  # Track admin login status
@@ -220,19 +225,14 @@ class TestExecutor:
             all_actions_passed = True
 
             # Track subscription state across all actions
-            # This is needed for verification of cancel/reactivate/advance_time
-            subscription_state = {
-                'test_name': test_name,  # Test name for display in manual steps
-                'subscription_type': None,  # e.g., '1y_premium', '2y_premium'
-                'plan_code': None,  # e.g., 1 (from subscription config)
-                'duration_months': None,  # e.g., 12, 24, 120 (from subscription config)
-                'status_code': None,  # e.g., 1=active, 3=trial, 4=cancelled
-                'start_date': None,  # ISO format
-                'expire_date': None,  # ISO format
-                'trial_period_days': None,  # e.g., 45
-                'is_cancelled': False,  # Whether subscription was cancelled
-                'days_advanced': 0  # Total days advanced via advance_time actions
-            }
+            # Capture initial state from API using state manager
+            subscription_state = self.state_manager.get_current_state()
+            subscription_state.test_name = test_name  # Add test context
+            
+            self.logger.info(
+                f"Initial subscription state: exists={subscription_state.exists}, "
+                f"status={subscription_state.status_name}"
+            )
 
             for action_idx, action_data in enumerate(actions, start=1):
                 action_name = action_data['action']
@@ -241,11 +241,21 @@ class TestExecutor:
                 self.logger.info(f"\nAction {action_idx}/{len(actions)}: {action_name}")
 
                 try:
+                    # Snapshot state before purchase actions (for declined card verification)
+                    action_config = self.action_executor.actions_config.get(action_name, {})
+                    action_type = action_config.get('action_type')
+                    subscription_state_snapshot = None
+                    
+                    if action_type == 'purchase':
+                        subscription_state_snapshot = copy.deepcopy(subscription_state)
+                        self.logger.debug(f"Captured state snapshot: exists={subscription_state_snapshot.exists}")
+                    
                     # Execute action
                     action_result = self.action_executor.execute_action(
                         action_name,
                         param,
-                        subscription_state=subscription_state
+                        subscription_state=subscription_state,
+                        subscription_state_snapshot=subscription_state_snapshot
                     )
                     result['action_results'].append({
                         'action': action_name,
@@ -287,7 +297,7 @@ class TestExecutor:
                         # Also extract plan_code and duration_months from subscription config
                         if action_result.get('subscription_type'):
                             subscription_type = action_result.get('subscription_type')
-                            subscription_state['subscription_type'] = subscription_type
+                            subscription_state.subscription_type = subscription_type
 
                             # Load subscription config to get plan_code and duration_months
                             from pathlib import Path
@@ -297,23 +307,23 @@ class TestExecutor:
                                 subscriptions_config = json.load(f)
 
                             sub_config = subscriptions_config.get(subscription_type, {})
-                            subscription_state['plan_code'] = sub_config.get('code')
-                            subscription_state['duration_months'] = sub_config.get('duration_months')
+                            subscription_state.plan_code = sub_config.get('code')
+                            subscription_state.duration_months = sub_config.get('duration_months')
 
-                            self.logger.info(f"Updated subscription metadata: type={subscription_type}, plan_code={subscription_state['plan_code']}, duration_months={subscription_state['duration_months']}")
+                            self.logger.info(f"Updated subscription metadata: type={subscription_type}, plan_code={subscription_state.plan_code}, duration_months={subscription_state.duration_months}")
 
                         # Track cancel status
                         if action_type == 'cancel':
-                            subscription_state['is_cancelled'] = True
+                            subscription_state.is_cancelled = True
                             self.logger.info("Subscription marked as cancelled")
                         elif action_type == 'reactivate':
-                            subscription_state['is_cancelled'] = False
+                            subscription_state.is_cancelled = False
                             self.logger.info("Subscription marked as reactivated")
                         elif action_type == 'advance_time':
                             # Track days advanced
                             days_advanced = action_result.get('days_advanced', 0)
-                            subscription_state['days_advanced'] += days_advanced
-                            self.logger.info(f"Total days advanced: {subscription_state['days_advanced']}")
+                            subscription_state.days_advanced += days_advanced
+                            self.logger.info(f"Total days advanced: {subscription_state.days_advanced}")
 
                     # Check if this is a manual verification action
                     if action_type == 'verify':
@@ -363,15 +373,16 @@ class TestExecutor:
                         self.logger.info(f"✓ Re-login successful, session refreshed")
 
                     # Wait 2 seconds for backend to process webhook and update subscription
-                    self.logger.info("Waiting 2 seconds for backend webhook processing...")
-                    time.sleep(2)
+                    self.logger.info("Waiting 5 seconds for backend webhook processing...")
+                    time.sleep(5)
 
                     # Verify action result (USER-LEVEL API)
                     self.logger.info(f"Verifying action result (User API)...")
                     verify_result = self.user_verifier.verify_from_user_api(
                         action_name,
                         action_result,
-                        subscription_state=subscription_state
+                        subscription_state=subscription_state,
+                        subscription_state_snapshot=subscription_state_snapshot
                     )
                     # Add action context to verification result
                     verify_result['action_name'] = action_name
@@ -383,11 +394,11 @@ class TestExecutor:
                     # This ensures subsequent actions have accurate state information
                     if verify_result.get('subscription'):
                         sub_data = verify_result['subscription']
-                        subscription_state['status_code'] = sub_data.get('status_code')
-                        subscription_state['start_date'] = sub_data.get('start_date')
-                        subscription_state['expire_date'] = sub_data.get('expire_date')
+                        subscription_state.status_code = sub_data.get('status_code')
+                        subscription_state.start_date = sub_data.get('start_date')
+                        subscription_state.expire_date = sub_data.get('expire_date')
                         if sub_data.get('trial_period_days'):
-                            subscription_state['trial_period_days'] = sub_data.get('trial_period_days')
+                            subscription_state.trial_period_days = sub_data.get('trial_period_days')
                         self.logger.debug(f"Updated subscription state from verification (status={sub_data.get('status_code')}, expire={sub_data.get('expire_date')})")
 
                     if not verify_result.get('verified'):
@@ -440,7 +451,9 @@ class TestExecutor:
                                 expected_expire_date=expected_expire_date,
                                 check_dates=True,  # Enable date verification in admin API
                                 subscription_state=subscription_state,
-                                action_type=action_type
+                                action_type=action_type,
+                                subscription_state_snapshot=subscription_state_snapshot,
+                                expected_result=action_result.get('expected_result')
                             )
                             # Add action context to verification result
                             admin_verify_result['action_name'] = action_name
@@ -448,10 +461,8 @@ class TestExecutor:
                             result['verification_results'].append(admin_verify_result)
 
                             if not admin_verify_result.get('verified'):
-                                # Admin API uses webhook data which may have 30-60+ second delays
-                                # User API verification (from login data) is authoritative, so treat admin as warning only
-                                self.logger.warning(f"⚠ Admin API verification failed: {admin_verify_result.get('message')}")
-                                self.logger.warning("⚠ Note: Admin API depends on webhooks which may have significant delays. This is non-blocking.")
+                                all_actions_passed = False
+                                self.logger.error(f"✗ Admin API verification failed: {admin_verify_result.get('message')}")
                             else:
                                 self.logger.info(f"✓ Admin API verification passed")
                         except Exception as e:
@@ -494,17 +505,17 @@ class TestExecutor:
                 should_cleanup = False
                 cleanup_reason = ""
 
-                if self.cleanup_users == "always":
+                if self.cleanup_mode == CleanupMode.ALWAYS:
                     should_cleanup = True
                     cleanup_reason = "cleanup mode is 'always'"
-                elif self.cleanup_users == "passed" and result['passed']:
+                elif self.cleanup_mode == CleanupMode.PASSED and result['passed']:
                     should_cleanup = True
                     cleanup_reason = "test PASSED and cleanup mode is 'passed'"
-                elif self.cleanup_users == "never":
+                elif self.cleanup_mode == CleanupMode.NEVER:
                     should_cleanup = False
                     cleanup_reason = "cleanup mode is 'never'"
                 else:
-                    # cleanup_users == "passed" but test failed
+                    # cleanup_mode == PASSED but test failed
                     should_cleanup = False
                     cleanup_reason = "test FAILED and cleanup mode is 'passed'"
 

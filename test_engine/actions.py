@@ -10,6 +10,7 @@ from pathlib import Path
 from base.logger import Logger
 from api.mlm_api import MlmAPI
 from test_engine.stripe_verifier import StripeCheckoutVerifier
+from models.types import ExpectedPaymentResult, SubscriptionState
 
 
 class ActionExecutor:
@@ -67,7 +68,8 @@ class ActionExecutor:
         self, 
         action_name: str, 
         param: Optional[str] = None,
-        subscription_state: Optional[Dict[str, Any]] = None
+        subscription_state: Optional[SubscriptionState] = None,
+        subscription_state_snapshot: Optional[SubscriptionState] = None
     ) -> Dict[str, Any]:
         """
         Execute a single action
@@ -76,6 +78,7 @@ class ActionExecutor:
             action_name: Action identifier (e.g., 'purchase_1y_premium')
             param: Action parameter (e.g., 'visa_success')
             subscription_state: Current subscription state (for advance_time calculations)
+            subscription_state_snapshot: State snapshot before action (for declined card verification)
             
         Returns:
             Result dictionary with status and details
@@ -95,7 +98,7 @@ class ActionExecutor:
         # MUST return 'subscription_type' in their result dict so the executor can 
         # track the latest active subscription across multiple actions
         if action_type == 'purchase':
-            return self._execute_purchase_action(action_name, action_config, param)
+            return self._execute_purchase_action(action_name, action_config, param, subscription_state_snapshot)
         elif action_type == 'cancel':
             return self._execute_cancel_action(action_name, action_config)
         elif action_type == 'reactivate':
@@ -110,7 +113,13 @@ class ActionExecutor:
         else:
             raise NotImplementedError(f"Action type not implemented: {action_type}")
     
-    def _execute_purchase_action(self, action_name: str, action_config: Dict, param: Optional[str]) -> Dict[str, Any]:
+    def _execute_purchase_action(
+        self, 
+        action_name: str, 
+        action_config: Dict, 
+        param: Optional[str],
+        subscription_state_snapshot: Optional[SubscriptionState] = None
+    ) -> Dict[str, Any]:
         """
         Execute a purchase action
         
@@ -118,6 +127,7 @@ class ActionExecutor:
             action_name: Action name
             action_config: Action configuration
             param: Card type parameter
+            subscription_state_snapshot: State snapshot before purchase (for declined card verification)
             
         Returns:
             Result dictionary
@@ -225,7 +235,7 @@ class ActionExecutor:
                 country=self.country_code
             )
             
-            if expected_result == 'success':
+            if expected_result == ExpectedPaymentResult.SUCCESS.value:
                 if payment_result['success']:
                     self.logger.info("✓ Payment completed successfully as expected")
                     return {
@@ -243,7 +253,7 @@ class ActionExecutor:
                     return {
                         'success': False,
                         'message': 'Payment failed unexpectedly',
-                        'expected': 'success',
+                        'expected': ExpectedPaymentResult.SUCCESS.value,
                         'actual': 'failed',
                         'payment_result': payment_result
                     }
@@ -255,7 +265,9 @@ class ActionExecutor:
                         'success': True,
                         'message': f'Payment correctly declined ({expected_result})',
                         'expected_result': expected_result,
-                        'payment_result': payment_result
+                        'card_type': card_type,
+                        'payment_result': payment_result,
+                        'subscription_state_snapshot': subscription_state_snapshot
                     }
                 else:
                     self.logger.error("✗ Payment succeeded but failure was expected")
@@ -263,7 +275,7 @@ class ActionExecutor:
                         'success': False,
                         'message': 'Payment succeeded unexpectedly',
                         'expected': expected_result,
-                        'actual': 'success',
+                        'actual': ExpectedPaymentResult.SUCCESS.value,
                         'payment_result': payment_result
                     }
         
@@ -473,7 +485,7 @@ class ActionExecutor:
         action_name: str, 
         action_config: Dict, 
         param: Optional[str],
-        subscription_state: Optional[Dict[str, Any]] = None
+        subscription_state: Optional[SubscriptionState] = None
     ) -> Dict[str, Any]:
         """
         Execute time advancement action (MANUAL INTERVENTION REQUIRED)
@@ -523,7 +535,7 @@ class ActionExecutor:
                 start_date = datetime.fromisoformat(original_sub.startDate.replace('Z', '+00:00'))
                 
                 # Get previously advanced days from subscription_state
-                days_already_advanced = subscription_state.get('days_advanced', 0) if subscription_state else 0
+                days_already_advanced = subscription_state.days_advanced if subscription_state else 0
                 
                 # Calculate simulated current date
                 simulated_current = start_date + timedelta(days=days_already_advanced)
@@ -544,7 +556,7 @@ class ActionExecutor:
                 target_date_str = f"{days_to_advance} days from current simulated time"
             
             # Get test name from subscription state
-            test_name = subscription_state.get('test_name', 'N/A') if subscription_state else 'N/A'
+            test_name = subscription_state.test_name if subscription_state and subscription_state.test_name else 'N/A'
             
             # Display manual intervention instructions
             print("\n" + "=" * 80)
@@ -603,7 +615,7 @@ class ActionExecutor:
                 'error': str(e)
             }
 
-    def _execute_verify_action(self, action_name: str, action_config: Dict[str, Any], param: str = None, subscription_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _execute_verify_action(self, action_name: str, action_config: Dict[str, Any], param: str = None, subscription_state: Optional[SubscriptionState] = None) -> Dict[str, Any]:
         """
         Execute manual verification step - pause and wait for tester input
 
@@ -637,7 +649,7 @@ class ActionExecutor:
         user_email = user_data.get('email', 'N/A')
         
         # Get test name from subscription state
-        test_name = subscription_state.get('test_name', 'N/A') if subscription_state else 'N/A'
+        test_name = subscription_state.test_name if subscription_state and subscription_state.test_name else 'N/A'
 
         # Show user info and the hint
         print(f"\n👤 USER INFO:")

@@ -86,9 +86,9 @@ class ExcelReader:
                 continue
             
             # Check if at least action_1 is provided
-            if not clean_case.get('action_1'):
-                self.logger.warning(f"Test {clean_case['test_id']}: No actions defined, skipping")
-                continue
+            #if not clean_case.get('action_1'):
+            #    self.logger.warning(f"Test {clean_case['test_id']}: No actions defined, skipping")
+            #    continue
             
             # Set default trial_status if not provided or NaN
             # Note: "None" in Excel becomes NaN when read by pandas
